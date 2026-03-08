@@ -20,6 +20,9 @@ jinja2
 imblearn
 dotenv
 setuptools
+clearml
+clearml-agent
+tensorflow
 
 
 
