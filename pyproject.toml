@@ -1,18 +1,22 @@
 [project]
-name = "vehicle-Maintainance"
+name = "src"
 version = "0.0.1"
-description = "A Vehicle insurance project for productionizing models"
-authors = [{name = "Prathamesh Uravane", email = "upratham2002@gmail.com"},{name="Sankeerth B"},{name="Claude B"}]
+description = "A Vehicle Maintenance Prediction for vehicle owners"
+authors = [
+    {name = "Prathamesh Uravane", email = "upratham2002@gmail.com"},
+    {name = "Sankeerth B", email = "sankeerthb@gmail.com"},
+    {name = "Claude B", email = "claudesaul@outlook.com"}
+]
 requires-python = "==3.12.*"
 dependencies = [
     "boto3>=1.42.30",
     "botocore>=1.42.30",
     "certifi>=2026.1.4",
     "dill>=0.4.0",
-    "dotenv>=0.9.9",
+    "python-dotenv>=1.0.0",
     "fastapi>=0.128.0",
     "from-root>=1.3.0",
-    "imblearn>=0.0",
+    "imbalanced-learn>=0.12.0",
     "ipykernel>=7.1.0",
     "jinja2>=3.1.6",
     "matplotlib>=3.10.8",
@@ -25,11 +29,11 @@ dependencies = [
     "pyyaml>=6.0.3",
     "scikit-learn>=1.8.0",
     "seaborn>=0.13.2",
+    "setuptools>=82.0.0",
     "uvicorn>=0.40.0",
 ]
 
-[tool.setuptools]
-packages = {find = {}}
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
 
-[tool.setuptools.dynamic]
-dependencies = {file = "requirements.txt"}

@@ -19,3 +19,8 @@ uvicorn
 jinja2
 imblearn
 dotenv
+setuptools
+
+
+
+
