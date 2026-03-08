@@ -1,5 +1,5 @@
 [project]
-name = "src"
+name = "Vehicle-Maintenance"
 version = "0.0.1"
 description = "A Vehicle Maintenance Prediction for vehicle owners"
 authors = [
@@ -31,6 +31,8 @@ dependencies = [
     "seaborn>=0.13.2",
     "setuptools>=82.0.0",
     "uvicorn>=0.40.0",
+    "imblearn>=0.0",
+    "dotenv>=0.9.9",
 ]
 
 [tool.setuptools.packages.find]
