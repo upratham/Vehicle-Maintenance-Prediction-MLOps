@@ -1,8 +1,6 @@
 from clearml import Task
 from clearml.automation import HyperParameterOptimizer
 from clearml.automation.parameters import UniformParameterRange, DiscreteParameterRange
-from train_ann_clearml import main as train_main
-
 
 def job_complete_callback(job_id, objective_value, objective_iteration, job_parameters, top_performance_job_id):
     print("Job completed")
@@ -15,16 +13,16 @@ def job_complete_callback(job_id, objective_value, objective_iteration, job_para
 
 
 def main():
-    base_task_id=train_main()
+    base_task_id="bb99aa2778fa43f39a46d30d8674d961"
     task = Task.init(
-        project_name="605-project",
+        project_name="605-Vehicle_Maintainance-project",
         task_name="ANN HPO Controller",
         task_type=Task.TaskTypes.optimizer,
         reuse_last_task_id=False,
     )
 
     optimizer = HyperParameterOptimizer(
-        base_task_id=base_task_id,
+        base_task_id=base_task_id,    
         hyper_parameters=[
             DiscreteParameterRange("General/batch_size", values=[32, 64, 128]),
             UniformParameterRange("General/learning_rate", min_value=0.0001, max_value=0.005, step_size=0.0005),
@@ -42,7 +40,7 @@ def main():
         objective_metric_series="auc",
         objective_metric_sign="max",
         execution_queue="default",
-        max_number_of_concurrent_tasks=1,
+        max_number_of_concurrent_tasks=8,
         total_max_jobs=20,
         save_top_k_tasks_only=5,
         min_iteration_per_job=10,

@@ -1,4 +1,7 @@
 import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import numpy as np
 import tensorflow as tf
 import pandas as pd
@@ -8,7 +11,6 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Input
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.regularizers import l2
-from data_preprocessing import DataPreprocessor
 from data_preprocessing import main as preprocess_main
 
 
@@ -58,7 +60,7 @@ def build_model(input_dim, params):
 
 def main():
     task = Task.init(
-        project_name="605-project",
+        project_name="605-Vehicle_Maintainance-project",
         task_name="ANN Binary Classification Base",
         task_type=Task.TaskTypes.training,
         reuse_last_task_id=False,
