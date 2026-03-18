@@ -1,7 +1,4 @@
 import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 import numpy as np
 import tensorflow as tf
 import pandas as pd
@@ -11,6 +8,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Input
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.regularizers import l2
+from data_preprocessing import DataPreprocessor
 from data_preprocessing import main as preprocess_main
 
 
