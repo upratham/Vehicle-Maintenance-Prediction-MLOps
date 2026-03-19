@@ -93,34 +93,25 @@ class DataValidation:
         try:
             validation_error_msg = ""
             logging.info("Starting data validation")
-            train_df, test_df = (DataValidation.read_data(file_path=self.data_ingestion_artifact.trained_file_path),
-                                 DataValidation.read_data(file_path=self.data_ingestion_artifact.test_file_path))
+            df = (DataValidation.read_data(file_path=self.data_ingestion_artifact.feature_store_file_path))
 
             # Checking col len of dataframe for train/test df
-            status = self.validate_number_of_columns(dataframe=train_df)
+            status = self.validate_number_of_columns(dataframe=df)
             if not status:
-                validation_error_msg += f"Columns are missing in training dataframe. "
+                validation_error_msg += f"Columns are missing in  dataframe. "
             else:
-                logging.info(f"All required columns present in training dataframe: {status}")
+                logging.info(f"All required columns present in  dataframe: {status}")
 
-            status = self.validate_number_of_columns(dataframe=test_df)
-            if not status:
-                validation_error_msg += f"Columns are missing in test dataframe. "
-            else:
-                logging.info(f"All required columns present in testing dataframe: {status}")
+    
 
             # Validating col dtype for train/test df
-            status = self.is_column_exist(df=train_df)
+            status = self.is_column_exist(df=df)
             if not status:
-                validation_error_msg += f"Columns are missing in training dataframe. "
+                validation_error_msg += f"Columns are missing in  dataframe. "
             else:
-                logging.info(f"All categorical/int columns present in training dataframe: {status}")
+                logging.info(f"All categorical/int columns present in  dataframe: {status}")
 
-            status = self.is_column_exist(df=test_df)
-            if not status:
-                validation_error_msg += f"Columns are missing in test dataframe."
-            else:
-                logging.info(f"All categorical/int columns present in testing dataframe: {status}")
+       
 
             validation_status = len(validation_error_msg) == 0
 

@@ -1,8 +1,12 @@
 import os
 from datetime import date
 from dotenv import load_dotenv
+import pandas as pd
 load_dotenv(override=True)
 # For MongoDB connection
+REFERENCE_DATE = pd.Timestamp("2026-03-07")
+PLOT_DIR = "plots"
+
 DATABASE_NAME = os.getenv("DB_USERNAME")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME")
 MONGODB_URL_KEY = os.getenv("CONNECTION_URL")
@@ -48,7 +52,13 @@ Data Transformation ralated constant start with DATA_TRANSFORMATION VAR NAME
 DATA_TRANSFORMATION_DIR_NAME: str = "data_transformation"
 DATA_TRANSFORMATION_TRANSFORMED_DATA_DIR: str = "transformed"
 DATA_TRANSFORMATION_TRANSFORMED_OBJECT_DIR: str = "transformed_object"
-
+ORDINAL_FEATURES={
+            "Maintenance_History": ["Poor", "Average", "Good"],
+            "Tire_Condition":      ["Worn Out", "Good", "New"],
+            "Brake_Condition":     ["Worn Out", "Good", "New"],
+            "Battery_Status":      ["Weak", "Good", "Strong"],
+        }
+NOMINAL_FEATURES = ["Vehicle_Model", "Fuel_Type", "Transmission_Type", "Owner_Type"]
 """
 MODEL TRAINER related constant start with MODEL_TRAINER var name
 """

@@ -1,5 +1,4 @@
 columns:
-  - _id: int
   - Vehicle_Model: category
   - Mileage: int
   - Maintenance_History: category
@@ -31,7 +30,8 @@ numerical_columns:
   - Service_History
   - Accident_History
   - Fuel_Efficiency
-  - Need_Maintenance
+
+
 
 categorical_columns:
   - Vehicle_Model
@@ -47,6 +47,12 @@ categorical_columns:
 
 drop_columns: []
 
+target_column: Need_Maintenance
+
+date_columns:
+  - Last_Service_Date
+  - Warranty_Expiry_Date
+
 # for data transformation
 num_features:
   - Mileage
@@ -60,3 +66,4 @@ num_features:
   - Fuel_Efficiency
 
 mm_columns: []
+
