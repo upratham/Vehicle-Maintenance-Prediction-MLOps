@@ -58,6 +58,7 @@ ORDINAL_FEATURES={
             "Brake_Condition":     ["Worn Out", "Good", "New"],
             "Battery_Status":      ["Weak", "Good", "Strong"],
         }
+
 NOMINAL_FEATURES = ["Vehicle_Model", "Fuel_Type", "Transmission_Type", "Owner_Type"]
 """
 MODEL TRAINER related constant start with MODEL_TRAINER var name
@@ -67,12 +68,22 @@ MODEL_TRAINER_TRAINED_MODEL_DIR: str = "trained_model"
 MODEL_TRAINER_TRAINED_MODEL_NAME: str = "model.pkl"
 MODEL_TRAINER_EXPECTED_SCORE: float = 0.6
 MODEL_TRAINER_MODEL_CONFIG_FILE_PATH: str = os.path.join("config", "model.yaml")
-MODEL_TRAINER_N_ESTIMATORS=200
-MODEL_TRAINER_MIN_SAMPLES_SPLIT: int = 7
-MODEL_TRAINER_MIN_SAMPLES_LEAF: int = 6
-MIN_SAMPLES_SPLIT_MAX_DEPTH: int = 10
-MIN_SAMPLES_SPLIT_CRITERION: str = 'entropy'
-MIN_SAMPLES_SPLIT_RANDOM_STATE: int = 101
+PARAM = {
+        "random_state": 42,
+        "epochs": 30,
+        "batch_size": 64,
+        "learning_rate": 0.001,
+        "optimizer": "adam",          # adam, rmsprop, sgd
+        "activation": "relu",         # relu, elu, tanh
+        "num_layers": 2,
+        "units_layer_1": 128,
+        "units_layer_2": 64,
+        "units_layer_3": 32,
+        "dropout": 0.3,
+        "l2_reg": 1e-4,
+        "batch_norm": True,
+        "threshold": 0.5,
+    }
 
 """
 MODEL Evaluation related constants

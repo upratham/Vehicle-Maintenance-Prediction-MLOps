@@ -18,6 +18,7 @@ from src.entity.artifact_entity import DataTransformationArtifact, DataIngestion
 from src.exception import MyException
 from src.logger import logging
 from src.utils.main_utils import save_object, save_numpy_array_data, read_yaml_file
+logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 
 
 class DataTransformation:
@@ -135,7 +136,7 @@ class DataTransformation:
         """Apply custom transformations in specified sequence."""
         logging.info("Applying custom transformations in specified sequence")
 
-        nominal_features = ["Vehicle_Model", "Fuel_Type", "Transmission_Type", "Owner_Type"]
+        nominal_features = NOMINAL_FEATURES
         nominal_features = [col for col in nominal_features if col in X.columns]
 
         numerical_features = [
@@ -143,12 +144,7 @@ class DataTransformation:
             if c != self._schema_config['target_column'] and c in X.columns
         ]
 
-        ordinal_features ={
-            "Maintenance_History": ["Poor", "Average", "Good"],
-            "Tire_Condition":      ["Worn Out", "Good", "New"],
-            "Brake_Condition":     ["Worn Out", "Good", "New"],
-            "Battery_Status":      ["Weak", "Good", "Strong"],
-        }
+        ordinal_features =ORDINAL_FEATURES
 
         ordinal_features = {k: v for k, v in ordinal_features.items() if k in X.columns}
         ordinal_cols = list(ordinal_features.keys())
@@ -211,7 +207,7 @@ class DataTransformation:
 
             logging.info("Data transformation done end to end.")
 
-            logging.info("Applying SMOTEENN for handling imbalanced dataset.")
+            logging.info("Applying SMOTE for handling imbalanced dataset.")
             smote = SMOTE(random_state=42)
             X_train_arr, y_train_arr = smote.fit_resample(X_train, y_train)
         
