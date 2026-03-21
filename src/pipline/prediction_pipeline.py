@@ -5,7 +5,7 @@ from src.entity.config_entity import VehiclePredictorConfig
 from src.entity.s3_estimator import Proj1Estimator
 from src.exception import MyException
 from src.logger import logging
-from src.constants import REFERENCE_DATE, PREPROCSSING_OBJECT_FILE_NAME, PREPROCESSOR_OBJ_DIR,DATA_TRANSFORMATION_TRANSFORMED_OBJECT_DIR
+from src.constants import *
 from src.utils.main_utils import load_object
 from pandas import DataFrame
 import glob
