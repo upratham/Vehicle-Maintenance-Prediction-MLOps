@@ -70,11 +70,11 @@ MODEL_TRAINER_EXPECTED_SCORE: float = 0.6
 MODEL_TRAINER_MODEL_CONFIG_FILE_PATH: str = os.path.join("config", "model.yaml")
 PARAM = {
         "random_state": 42,
-        "epochs": 30,
+        "epochs": 10,
         "batch_size": 64,
         "learning_rate": 0.001,
-        "optimizer": "adam",          # adam, rmsprop, sgd
-        "activation": "relu",         # relu, elu, tanh
+        "optimizer": "adam",          
+        "activation": "relu",        
         "num_layers": 2,
         "units_layer_1": 128,
         "units_layer_2": 64,
