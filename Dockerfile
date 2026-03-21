@@ -7,6 +7,9 @@ WORKDIR /app
 # Copy your application code
 COPY . /app
 
+# Explicitly copy preprocessor
+COPY preprocessor_obj /app/preprocessor_obj
+
 # Install the dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
