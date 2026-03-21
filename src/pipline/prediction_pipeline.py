@@ -15,7 +15,8 @@ import os
 def get_latest_preprocessor_path():
     """Find the most recently saved preprocessor from artifact directory."""
     file_path = os.path.join(PREPROCESSOR_OBJ_DIR, PREPROCSSING_OBJECT_FILE_NAME)
-    if not file_path:
+    print(f"Looking for preprocessor at: {file_path}")
+    if not os.path.exists(file_path):
         raise FileNotFoundError(f"No preprocessor found matching: {file_path}")
     else:
         logging.info(f"Using preprocessor: {file_path}")
@@ -179,3 +180,6 @@ class VehicleDataClassifier:
 
         except Exception as e:
             raise MyException(e, sys)
+        
+if __name__ == "__main__":
+    get_latest_preprocessor_path()
