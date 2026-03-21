@@ -5,7 +5,7 @@ from src.entity.config_entity import VehiclePredictorConfig
 from src.entity.s3_estimator import Proj1Estimator
 from src.exception import MyException
 from src.logger import logging
-from src.constants import REFERENCE_DATE, PREPROCSSING_OBJECT_FILE_NAME, PREPROCESSOR_OBJ_DIR, DATA_TRANSFORMATION_DIR_NAME, DATA_TRANSFORMATION_TRANSFORMED_OBJECT_DIR
+from src.constants import REFERENCE_DATE, PREPROCSSING_OBJECT_FILE_NAME, PREPROCESSOR_OBJ_DIR,DATA_TRANSFORMATION_TRANSFORMED_OBJECT_DIR
 from src.utils.main_utils import load_object
 from pandas import DataFrame
 import glob
@@ -14,7 +14,7 @@ import os
 
 def get_latest_preprocessor_path():
     """Find the most recently saved preprocessor from artifact directory."""
-    file_path = os.path.join(PREPROCESSOR_OBJ_DIR,DATA_TRANSFORMATION_DIR_NAME)
+    file_path = os.path.join(PREPROCESSOR_OBJ_DIR, PREPROCSSING_OBJECT_FILE_NAME)
     if not file_path:
         raise FileNotFoundError(f"No preprocessor found matching: {file_path}")
     else:
