@@ -1,7 +1,7 @@
-artifact\*\data_ingestion\feature_store
-artifact\*\data_transformation\transformed
-artifact\03_20_2026_22_09_05\data_validation
-artifact\03_20_2026_22_09_05\model_trainer
+artifact/*/data_ingestion/feature_store
+artifact/*/data_transformation/transformed
+artifact/*/data_validation
+artifact/*/model_trainer
 venv
 .env
 .gitignore
@@ -10,6 +10,6 @@ template.py
 demo.py
 README.md
 LICENSE
-src.egg.-info
+src.egg-info
 notebooks
 plots
