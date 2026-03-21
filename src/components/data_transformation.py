@@ -134,8 +134,9 @@ class DataTransformation:
         X = df.drop(columns=['Need_Maintenance'])
         y = df['Need_Maintenance']
         return X, y
-
-    def data_transformation_and_scaling(self, X):
+    
+    
+    def data_transformation_and_scaling_obj(self,X):
         """Apply custom transformations in specified sequence."""
         logging.info("Applying custom transformations in specified sequence")
 
@@ -181,8 +182,8 @@ class DataTransformation:
             remainder="drop"
         )
         
-        X_scaled = preprocessor.fit_transform(X)
-        return X_scaled , preprocessor
+        
+        return preprocessor
     
     def initiate_data_transformation(self) -> DataTransformationArtifact:
         """
@@ -199,14 +200,22 @@ class DataTransformation:
             # Apply transformation steps to train
             df=self.handle_duplicates_and_missing_values(df)
             df=self.convert_date_to_days(df)
-            df=self.cap_outliers(df)
             df=self.encode_categorical_variables(df)
             X, y = self.split_features_and_target(df)
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+            X_train=self.cap_outliers(X_train)
+           
+
+            
    
             logging.info("Custom transformations applied to data")
             logging.info("Starting data transformation")
-            X_scaled, preprocessor = self.data_transformation_and_scaling(X)
-            X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
+            preprocessor = self.data_transformation_and_scaling_obj(X_train)
+            preprocessor.fit(X_train)
+            X_train = preprocessor.transform(X_train)
+            X_test = preprocessor.transform(X_test)
+
+           
 
             logging.info("Data transformation done end to end.")
 

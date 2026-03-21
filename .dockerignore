@@ -1,8 +1,4 @@
-artifact/*/data_ingestion/feature_store
-artifact/*/data_transformation/transformed
-artifact/*/data_validation
-artifact/*/model_trainer
-venv
+artifact
 .env
 .gitignore
 logs

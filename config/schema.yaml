@@ -53,17 +53,6 @@ date_columns:
   - Last_Service_Date
   - Warranty_Expiry_Date
 
-# for data transformation
-num_features:
-  - Mileage
-  - Reported_Issues
-  - Vehicle_Age
-  - Engine_Size
-  - Odometer_Reading
-  - Insurance_Premium
-  - Service_History
-  - Accident_History
-  - Fuel_Efficiency
 
 mm_columns: []
 
