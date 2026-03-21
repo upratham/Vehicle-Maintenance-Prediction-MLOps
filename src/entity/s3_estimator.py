@@ -52,14 +52,12 @@ class Proj1Estimator:
             raise MyException(e, sys)
 
 
-    def predict(self,dataframe:DataFrame):
-        """
-        :param dataframe:
-        :return:
-        """
+    def predict(self, X):
         try:
             if self.loaded_model is None:
                 self.loaded_model = self.load_model()
-            return self.loaded_model.predict(dataframe=dataframe)
+            # Handle both raw Keras model and wrapper objects
+            if hasattr(self.loaded_model, 'predict'):
+                return self.loaded_model.predict(X)
         except Exception as e:
             raise MyException(e, sys)

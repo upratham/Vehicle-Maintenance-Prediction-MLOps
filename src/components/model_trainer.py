@@ -31,6 +31,7 @@ class ModelTrainer:
 
   
     def build_model(self, input_dim, params):
+        logging.info(f"Building ANN model with input dimension {input_dim}")
         model = Sequential()
         model.add(Input(shape=(input_dim,)))
 

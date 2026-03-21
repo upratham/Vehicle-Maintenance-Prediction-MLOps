@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Maintenance Prediction</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<header class="header">
+    <div class="header-icon">🚗</div>
+    <h1>Vehicle <span>Maintenance</span> Prediction</h1>
+    <a href="/train" class="train-btn">⚙ Train Model</a>
+</header>
+
+<main class="main">
+    <form method="post" action="/">
+
+        <!-- Numerical Inputs -->
+        <div class="section-title">Vehicle Metrics</div>
+        <div class="card">
+            <div class="grid-3">
+                <div class="field">
+                    <label>Mileage</label>
+                    <input type="number" name="Mileage" placeholder="e.g. 45000" required>
+                </div>
+                <div class="field">
+                    <label>Vehicle Age (years)</label>
+                    <input type="number" name="Vehicle_Age" placeholder="e.g. 5" required>
+                </div>
+                <div class="field">
+                    <label>Engine Size (cc)</label>
+                    <input type="number" name="Engine_Size" placeholder="e.g. 1500" required>
+                </div>
+                <div class="field">
+                    <label>Odometer Reading</label>
+                    <input type="number" name="Odometer_Reading" placeholder="e.g. 60000" required>
+                </div>
+                <div class="field">
+                    <label>Fuel Efficiency (km/l)</label>
+                    <input type="number" step="0.01" name="Fuel_Efficiency" placeholder="e.g. 14.5" required>
+                </div>
+                <div class="field">
+                    <label>Insurance Premium</label>
+                    <input type="number" name="Insurance_Premium" placeholder="e.g. 8000" required>
+                </div>
+            </div>
+        </div>
+
+        <!-- History & Issues -->
+        <div class="section-title">Service & History</div>
+        <div class="card">
+            <div class="grid-3">
+                <div class="field">
+                    <label>Reported Issues</label>
+                    <input type="number" name="Reported_Issues" placeholder="e.g. 2" required>
+                </div>
+                <div class="field">
+                    <label>Service History (count)</label>
+                    <input type="number" name="Service_History" placeholder="e.g. 5" required>
+                </div>
+                <div class="field">
+                    <label>Accident History (count)</label>
+                    <input type="number" name="Accident_History" placeholder="e.g. 1" required>
+                </div>
+                <div class="field">
+                    <label>Last Service Date</label>
+                    <input type="date" name="Last_Service_Date" required>
+                </div>
+                <div class="field">
+                    <label>Warranty Expiry Date</label>
+                    <input type="date" name="Warranty_Expiry_Date" required>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ordinal Dropdowns -->
+        <div class="section-title">Condition Assessment</div>
+        <div class="card">
+            <div class="grid-2">
+                <div class="field">
+                    <label>Maintenance History</label>
+                    <select name="Maintenance_History" required>
+                        <option value="" disabled selected>Select condition</option>
+                        <option value="Poor">Poor</option>
+                        <option value="Average">Average</option>
+                        <option value="Good">Good</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Tire Condition</label>
+                    <select name="Tire_Condition" required>
+                        <option value="" disabled selected>Select condition</option>
+                        <option value="Worn Out">Worn Out</option>
+                        <option value="Good">Good</option>
+                        <option value="New">New</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Brake Condition</label>
+                    <select name="Brake_Condition" required>
+                        <option value="" disabled selected>Select condition</option>
+                        <option value="Worn Out">Worn Out</option>
+                        <option value="Good">Good</option>
+                        <option value="New">New</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Battery Status</label>
+                    <select name="Battery_Status" required>
+                        <option value="" disabled selected>Select status</option>
+                        <option value="Weak">Weak</option>
+                        <option value="Good">Good</option>
+                        <option value="Strong">Strong</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Nominal Dropdowns -->
+        <div class="section-title">Vehicle Details</div>
+        <div class="card">
+            <div class="grid-2">
+                <div class="field">
+                    <label>Vehicle Model</label>
+                    <select name="Vehicle_Model" required>
+                        <option value="" disabled selected>Select model</option>
+                        <option>Bus</option>
+                        <option>Van</option>
+                        <option>SUV</option>
+                        <option>Truck</option>
+                        <option>Motorcycle</option>
+                        <option>Car</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Fuel Type</label>
+                    <select name="Fuel_Type" required>
+                        <option value="" disabled selected>Select fuel type</option>
+                        <option>Petrol</option>
+                        <option>Diesel</option>
+                        <option>Electric</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Transmission Type</label>
+                    <select name="Transmission_Type" required>
+                        <option value="" disabled selected>Select transmission</option>
+                        <option>Manual</option>
+                        <option>Automatic</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Owner Type</label>
+                    <select name="Owner_Type" required>
+                        <option value="" disabled selected>Select owner type</option>
+                        <option>First</option>
+                        <option>Second</option>
+                        <option>Third</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="submit-row">
+            <button type="submit" class="predict-btn">Run Prediction</button>
+        </div>
+
+    </form>
+
+    {% if context and context != "Rendering" %}
+        <div class="result-box {% if context == 'Maintenance Required' %}warning{% endif %}">
+            <div>
+                <div class="result-label">Prediction Result</div>
+                <div class="result-value">{{ context }}</div>
+            </div>
+        </div>
+    {% endif %}
+</main>
+
+</body>
+</html>

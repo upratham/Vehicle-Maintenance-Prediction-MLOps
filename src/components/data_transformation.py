@@ -49,6 +49,7 @@ class DataTransformation:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
                 df[col + "_days"] = (REFERENCE_DATE - df[col]).dt.days
+                df.drop(columns=[col], inplace=True)
         return df
     
     # Cap outliers in all numerical columns (except target) using IQR method to clip extreme values within acceptable bounds
@@ -80,7 +81,7 @@ class DataTransformation:
         """
         logging.info("Encoding categorical variables and performing feature selection")
         df_encoded = df.copy()
-        cat_cols_tmp =self._schema_config['categorical_columns']
+        cat_cols_tmp = [c for c in self._schema_config['categorical_columns'] if c in df.columns]
         le = LabelEncoder()
         for c in cat_cols_tmp:
             df_encoded[c] = le.fit_transform(df_encoded[c].astype(str))
@@ -121,6 +122,8 @@ class DataTransformation:
         zero_mi_features = mi_series[mi_series == 0].index.tolist()
         if zero_mi_features:
             df.drop(columns=zero_mi_features, inplace=True)
+
+        logging.info(f"Surviving columns after MI filter ({len(df.columns)}): {df.columns.tolist()}") 
         
         return df
 
@@ -177,9 +180,9 @@ class DataTransformation:
             transformers=transformers,
             remainder="drop"
         )
-
+        
         X_scaled = preprocessor.fit_transform(X)
-        return X_scaled
+        return X_scaled , preprocessor
     
     def initiate_data_transformation(self) -> DataTransformationArtifact:
         """
@@ -202,7 +205,7 @@ class DataTransformation:
    
             logging.info("Custom transformations applied to data")
             logging.info("Starting data transformation")
-            X_scaled = self.data_transformation_and_scaling(X)
+            X_scaled, preprocessor = self.data_transformation_and_scaling(X)
             X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
 
             logging.info("Data transformation done end to end.")
@@ -215,13 +218,14 @@ class DataTransformation:
             test_arr = np.c_[X_test, np.array(y_test)]
             logging.info("feature-target concatenation done for train-test df.")
 
-      
+            save_object(self.data_transformation_config.transformed_object_file_path, preprocessor)
             save_numpy_array_data(self.data_transformation_config.transformed_train_file_path, array=train_arr)
             save_numpy_array_data(self.data_transformation_config.transformed_test_file_path, array=test_arr)
             logging.info("Saving  transformed files.")
 
             logging.info("Data transformation completed successfully")
             return DataTransformationArtifact(
+                transformed_object_file_path=self.data_transformation_config.transformed_object_file_path,
                 transformed_train_file_path=self.data_transformation_config.transformed_train_file_path,
                 transformed_test_file_path=self.data_transformation_config.transformed_test_file_path
             )
