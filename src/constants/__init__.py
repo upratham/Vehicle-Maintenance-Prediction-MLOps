@@ -59,8 +59,9 @@ ORDINAL_FEATURES={
             "Brake_Condition":     ["Worn Out", "Good", "New"],
             "Battery_Status":      ["Weak", "Good", "Strong"],
         }
-
+DROP_FEATURES=["Maintenance_History","Mileage", "Last_Service_Date", "Warranty_Expiry_Date","Insurance_Premium", "Service_History", "Owner_Type"]
 NOMINAL_FEATURES = ["Vehicle_Model", "Fuel_Type", "Transmission_Type", "Owner_Type"]
+
 """
 MODEL TRAINER related constant start with MODEL_TRAINER var name
 """

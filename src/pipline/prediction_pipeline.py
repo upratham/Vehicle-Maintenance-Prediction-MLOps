@@ -25,25 +25,18 @@ def get_latest_preprocessor_path():
 
 class VehicleData:
     def __init__(self,
-                 Mileage,
                  Reported_Issues,
                  Vehicle_Age,
                  Engine_Size,
                  Odometer_Reading,
-                 Insurance_Premium,
-                 Service_History,
                  Accident_History,
                  Fuel_Efficiency,
-                 Maintenance_History,
                  Tire_Condition,
                  Brake_Condition,
                  Battery_Status,
                  Vehicle_Model,
                  Fuel_Type,
                  Transmission_Type,
-                 Owner_Type,
-                 Last_Service_Date,
-                 Warranty_Expiry_Date
                  ):
         """
         VehicleData constructor
@@ -51,18 +44,15 @@ class VehicleData:
         """
         try:
             # Numerical
-            self.Mileage = float(Mileage)
             self.Reported_Issues = int(Reported_Issues)
             self.Vehicle_Age = int(Vehicle_Age)
             self.Engine_Size = float(Engine_Size)
             self.Odometer_Reading = float(Odometer_Reading)
-            self.Insurance_Premium = float(Insurance_Premium)
-            self.Service_History = int(Service_History)
             self.Accident_History = int(Accident_History)
             self.Fuel_Efficiency = float(Fuel_Efficiency)
 
             # Ordinal categorical
-            self.Maintenance_History = Maintenance_History
+          
             self.Tire_Condition = Tire_Condition
             self.Brake_Condition = Brake_Condition
             self.Battery_Status = Battery_Status
@@ -71,11 +61,6 @@ class VehicleData:
             self.Vehicle_Model = Vehicle_Model
             self.Fuel_Type = Fuel_Type
             self.Transmission_Type = Transmission_Type
-            self.Owner_Type = Owner_Type
-
-            # Date fields
-            self.Last_Service_Date = Last_Service_Date
-            self.Warranty_Expiry_Date = Warranty_Expiry_Date
 
         except Exception as e:
             raise MyException(e, sys) from e
@@ -91,12 +76,7 @@ class VehicleData:
             vehicle_input_dict = self.get_vehicle_data_as_dict()
             df = DataFrame(vehicle_input_dict)
 
-            # Convert date columns to days (same as training)
-            for col in ['Last_Service_Date', 'Warranty_Expiry_Date']:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-                df[col + '_days'] = (REFERENCE_DATE - df[col]).dt.days
-                df.drop(columns=[col], inplace=True)
-
+            
             logging.info(f"Prediction input columns: {df.columns.tolist()}")
             return df
 
@@ -111,18 +91,18 @@ class VehicleData:
         try:
             input_data = {
                 # Numerical
-                "Mileage":            [self.Mileage],
+               
                 "Reported_Issues":    [self.Reported_Issues],
                 "Vehicle_Age":        [self.Vehicle_Age],
                 "Engine_Size":        [self.Engine_Size],
                 "Odometer_Reading":   [self.Odometer_Reading],
-                "Insurance_Premium":  [self.Insurance_Premium],
-                "Service_History":    [self.Service_History],
+                
+             
                 "Accident_History":   [self.Accident_History],
                 "Fuel_Efficiency":    [self.Fuel_Efficiency],
 
                 # Ordinal categorical
-                "Maintenance_History": [self.Maintenance_History],
+            
                 "Tire_Condition":      [self.Tire_Condition],
                 "Brake_Condition":     [self.Brake_Condition],
                 "Battery_Status":      [self.Battery_Status],
@@ -131,11 +111,8 @@ class VehicleData:
                 "Vehicle_Model":       [self.Vehicle_Model],
                 "Fuel_Type":           [self.Fuel_Type],
                 "Transmission_Type":   [self.Transmission_Type],
-                "Owner_Type":          [self.Owner_Type],
+           
 
-                # Date fields (raw — converted in get_vehicle_input_data_frame)
-                "Last_Service_Date":      [self.Last_Service_Date],
-                "Warranty_Expiry_Date":   [self.Warranty_Expiry_Date],
             }
 
             logging.info("Created vehicle data dict")
@@ -183,3 +160,4 @@ class VehicleDataClassifier:
         
 if __name__ == "__main__":
     get_latest_preprocessor_path()
+    

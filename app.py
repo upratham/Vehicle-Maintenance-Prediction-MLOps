@@ -36,18 +36,16 @@ class DataForm:
         self.request: Request = request
 
         # Numerical fields
-        self.Mileage: Optional[float] = None
         self.Reported_Issues: Optional[int] = None
         self.Vehicle_Age: Optional[int] = None
         self.Engine_Size: Optional[float] = None
         self.Odometer_Reading: Optional[float] = None
-        self.Insurance_Premium: Optional[float] = None
-        self.Service_History: Optional[int] = None
+    
         self.Accident_History: Optional[int] = None
         self.Fuel_Efficiency: Optional[float] = None
 
         # Ordinal categorical fields
-        self.Maintenance_History: Optional[str] = None
+    
         self.Tire_Condition: Optional[str] = None
         self.Brake_Condition: Optional[str] = None
         self.Battery_Status: Optional[str] = None
@@ -60,29 +58,25 @@ class DataForm:
         self.Vehicle_Model: Optional[str] = None
         self.Fuel_Type: Optional[str] = None
         self.Transmission_Type: Optional[str] = None
-        self.Owner_Type: Optional[str] = None
+     
 
         # Date fields
-        self.Last_Service_Date: Optional[str] = None
-        self.Warranty_Expiry_Date: Optional[str] = None
+   
 
     async def get_vehicle_data(self):
         """Retrieve and assign form data to class attributes."""
         form = await self.request.form()
 
         # Numerical
-        self.Mileage = form.get("Mileage")
+      
         self.Reported_Issues = form.get("Reported_Issues")
         self.Vehicle_Age = form.get("Vehicle_Age")
         self.Engine_Size = form.get("Engine_Size")
         self.Odometer_Reading = form.get("Odometer_Reading")
-        self.Insurance_Premium = form.get("Insurance_Premium")
-        self.Service_History = form.get("Service_History")
         self.Accident_History = form.get("Accident_History")
         self.Fuel_Efficiency = form.get("Fuel_Efficiency")
 
         # Ordinal categorical
-        self.Maintenance_History = form.get("Maintenance_History")
         self.Tire_Condition = form.get("Tire_Condition")
         self.Brake_Condition = form.get("Brake_Condition")
         self.Battery_Status = form.get("Battery_Status")
@@ -91,12 +85,8 @@ class DataForm:
         self.Vehicle_Model = form.get("Vehicle_Model")
         self.Fuel_Type = form.get("Fuel_Type")
         self.Transmission_Type = form.get("Transmission_Type")
-        self.Owner_Type = form.get("Owner_Type")
-
-        # Dates
-        self.Last_Service_Date = form.get("Last_Service_Date")
-        self.Warranty_Expiry_Date = form.get("Warranty_Expiry_Date")
-
+  
+       
 
 @app.get("/", tags=["authentication"])
 async def index(request: Request):
@@ -125,25 +115,19 @@ async def predictRouteClient(request: Request):
         await form.get_vehicle_data()
 
         vehicle_data = VehicleData(
-            Mileage=form.Mileage,
+            
             Reported_Issues=form.Reported_Issues,
             Vehicle_Age=form.Vehicle_Age,
             Engine_Size=form.Engine_Size,
             Odometer_Reading=form.Odometer_Reading,
-            Insurance_Premium=form.Insurance_Premium,
-            Service_History=form.Service_History,
             Accident_History=form.Accident_History,
             Fuel_Efficiency=form.Fuel_Efficiency,
-            Maintenance_History=form.Maintenance_History,
             Tire_Condition=form.Tire_Condition,
             Brake_Condition=form.Brake_Condition,
             Battery_Status=form.Battery_Status,
             Vehicle_Model=form.Vehicle_Model,
             Fuel_Type=form.Fuel_Type,
             Transmission_Type=form.Transmission_Type,
-            Owner_Type=form.Owner_Type,
-            Last_Service_Date=form.Last_Service_Date,
-            Warranty_Expiry_Date=form.Warranty_Expiry_Date,
         )
 
         vehicle_df = vehicle_data.get_vehicle_input_data_frame()

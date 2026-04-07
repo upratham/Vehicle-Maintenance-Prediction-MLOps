@@ -42,14 +42,12 @@ class DataTransformation:
         df = df.reset_index(drop=True) # Replace missing values with 0 (or use a more sophisticated strategy)
         return df
     
-    def convert_date_to_days(self, df):
-        """Convert date columns to days."""
-        logging.info("Converting date columns to days")
-        for col in self._schema_config['date_columns']:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors="coerce")
-                df[col + "_days"] = (REFERENCE_DATE - df[col]).dt.days
-                df.drop(columns=[col], inplace=True)
+    def drop_not_important_features(self, df):
+        """Drop features that are not important based on domain knowledge or feature importance analysis."""
+        logging.info("Dropping features that are not important based on domain knowledge or feature importance analysis")
+        features_to_drop = DROP_FEATURES
+        features_to_drop = [col for col in features_to_drop if col in df.columns]
+        df.drop(columns=features_to_drop, inplace=True)
         return df
     
     # Cap outliers in all numerical columns (except target) using IQR method to clip extreme values within acceptable bounds
@@ -74,7 +72,7 @@ class DataTransformation:
                 df[col] = np.where(df[col] > upper_bound, upper_bound, df[col])
 
         return df
-    
+
     def encode_categorical_variables(self, df):
         """ Encode categorical columns, compute Spearman correlation heatmap, calculate mutual information scores,
              and drop features with zero predictive power toward the target variable
@@ -199,7 +197,7 @@ class DataTransformation:
             logging.info("data loaded")
             # Apply transformation steps to train
             df=self.handle_duplicates_and_missing_values(df)
-            df=self.convert_date_to_days(df)
+            df=self.drop_not_important_features(df)
             df=self.encode_categorical_variables(df)
             X, y = self.split_features_and_target(df)
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
