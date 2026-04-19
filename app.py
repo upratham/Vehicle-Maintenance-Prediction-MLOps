@@ -11,6 +11,7 @@ from typing import Optional
 from src.constants import APP_HOST, APP_PORT
 from src.pipline.prediction_pipeline import VehicleData, VehicleDataClassifier
 from src.pipline.training_pipeline import TrainPipeline
+from src.logger import logging
 
 app = FastAPI()
 
@@ -85,6 +86,24 @@ class DataForm:
         self.Vehicle_Model = form.get("Vehicle_Model")
         self.Fuel_Type = form.get("Fuel_Type")
         self.Transmission_Type = form.get("Transmission_Type")
+
+    def get_missing_fields(self):
+        """Return a list of required fields that are missing or empty."""
+        required_fields = {
+            "Reported_Issues": self.Reported_Issues,
+            "Vehicle_Age": self.Vehicle_Age,
+            "Engine_Size": self.Engine_Size,
+            "Odometer_Reading": self.Odometer_Reading,
+            "Accident_History": self.Accident_History,
+            "Fuel_Efficiency": self.Fuel_Efficiency,
+            "Tire_Condition": self.Tire_Condition,
+            "Brake_Condition": self.Brake_Condition,
+            "Battery_Status": self.Battery_Status,
+            "Vehicle_Model": self.Vehicle_Model,
+            "Fuel_Type": self.Fuel_Type,
+            "Transmission_Type": self.Transmission_Type,
+        }
+        return [key for key, value in required_fields.items() if value in (None, "")]
   
        
 
@@ -92,7 +111,9 @@ class DataForm:
 async def index(request: Request):
     """Renders the main HTML form page for vehicle data input."""
     return templates.TemplateResponse(
-        "index.html", {"request": request, "context": "Rendering"}
+        request=request,
+        name="index.html",
+        context={"request": request, "context": "Rendering"},
     )
 
 
@@ -114,6 +135,18 @@ async def predictRouteClient(request: Request):
         form = DataForm(request)
         await form.get_vehicle_data()
 
+        missing_fields = form.get_missing_fields()
+        if missing_fields:
+            return templates.TemplateResponse(
+                request=request,
+                name="index.html",
+                context={
+                    "request": request,
+                    "context": f"Error: Missing required fields: {', '.join(missing_fields)}",
+                },
+                status_code=400,
+            )
+
         vehicle_data = VehicleData(
             
             Reported_Issues=form.Reported_Issues,
@@ -133,18 +166,27 @@ async def predictRouteClient(request: Request):
         vehicle_df = vehicle_data.get_vehicle_input_data_frame()
 
         model_predictor = VehicleDataClassifier()
-        value = model_predictor.predict(dataframe=vehicle_df)[0]
+        raw_prediction = model_predictor.predict(dataframe=vehicle_df)[0]
+        prediction_score = float(raw_prediction[0]) if hasattr(raw_prediction, "__len__") else float(raw_prediction)
+        value = 1 if prediction_score >= 0.5 else 0
 
         status = "Maintenance Required" if value == 1 else "No Maintenance Needed"
 
         return templates.TemplateResponse(
-            "index.html",
-            {"request": request, "context": status},
+            request=request,
+            name="index.html",
+            context={"request": request, "context": status},
         )
 
     except Exception as e:
-        return {"status": False, "error": f"{e}"}
+        logging.error(f"Prediction request failed: {e}", exc_info=True)
+        return templates.TemplateResponse(
+            request=request,
+            name="index.html",
+            context={"request": request, "context": f"Error: {e}"},
+            status_code=500,
+        )
 
 
 if __name__ == "__main__":
-    app_run(app, host=APP_HOST, port=APP_PORT)
+    app_run(app, host=APP_HOST, port=5000)
