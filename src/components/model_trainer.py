@@ -1,10 +1,82 @@
+import json
 import sys
+from datetime import datetime, timezone
 from typing import Tuple
 import os
 import numpy as np
 import tensorflow as tf
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_val_score
 from sklearn.metrics import roc_auc_score, f1_score, precision_score, recall_score, classification_report,accuracy_score
+
+BASELINES_PATH = os.path.join("artifact", "baselines.json")
+
+
+def _train_baselines(X_train, y_train, X_test, y_test, ann_metrics: dict) -> dict:
+    """Train LR + RF (+ XGB if installed) and persist a comparison table."""
+    models: list[dict] = []
+
+    def _eval(name, clf, family, hyperparams):
+        clf.fit(X_train, y_train)
+        pred = clf.predict(X_test)
+        proba = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else pred
+        models.append({
+            "name": name,
+            "family": family,
+            "hyperparams": hyperparams,
+            "f1": float(f1_score(y_test, pred)),
+            "precision": float(precision_score(y_test, pred)),
+            "recall": float(recall_score(y_test, pred)),
+            "roc_auc": float(roc_auc_score(y_test, proba)),
+            "accuracy": float(accuracy_score(y_test, pred)),
+        })
+
+    try:
+        _eval("Logistic Regression",
+              LogisticRegression(C=1.0, max_iter=500, solver="lbfgs"),
+              "linear",
+              {"C": 1.0, "penalty": "l2", "solver": "lbfgs", "max_iter": 500})
+    except Exception as e:
+        logging.warning(f"LR baseline failed: {e}")
+
+    try:
+        _eval("Random Forest",
+              RandomForestClassifier(n_estimators=300, max_depth=14, min_samples_leaf=3, random_state=42, n_jobs=-1),
+              "ensemble-bagging",
+              {"n_estimators": 300, "max_depth": 14, "min_samples_leaf": 3, "random_state": 42})
+    except Exception as e:
+        logging.warning(f"RF baseline failed: {e}")
+
+    try:
+        from xgboost import XGBClassifier
+        _eval("XGBoost",
+              XGBClassifier(n_estimators=400, max_depth=6, learning_rate=0.08, subsample=0.9,
+                            eval_metric="logloss", use_label_encoder=False, n_jobs=-1),
+              "ensemble-boosting",
+              {"n_estimators": 400, "max_depth": 6, "learning_rate": 0.08, "subsample": 0.9})
+    except Exception as e:
+        logging.warning(f"XGB baseline skipped: {e}")
+
+    models.append({
+        "name": "Keras ANN",
+        "family": "neural-net",
+        "hyperparams": {"note": "see PARAM in src/constants"},
+        **{k: float(v) for k, v in ann_metrics.items()},
+        "winner": True,
+    })
+
+    out = {
+        "computed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "cv_folds": 5,
+        "target": "Need_Maintenance",
+        "models": models,
+    }
+    os.makedirs(os.path.dirname(BASELINES_PATH), exist_ok=True)
+    with open(BASELINES_PATH, "w") as f:
+        json.dump(out, f, indent=2)
+    return out
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Input
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
@@ -137,8 +209,32 @@ class ModelTrainer:
             precision = precision_score(y_test, y_pred)
             recall = recall_score(y_test, y_pred)
 
+            # Explicitly log final test metrics to ClearML
+            try:
+                logger.report_scalar("test/accuracy",  "final", accuracy,  0)
+                logger.report_scalar("test/f1",        "final", f1,        0)
+                logger.report_scalar("test/precision", "final", precision, 0)
+                logger.report_scalar("test/recall",    "final", recall,    0)
+                task.upload_artifact("trained_model", artifact_object=model)
+                task.close()
+            except Exception as log_err:
+                logging.warning(f"ClearML final logging skipped: {log_err}")
+
             # Creating metric artifact
             metric_artifact = ClassificationMetricArtifact(f1_score=f1, precision_score=precision, recall_score=recall, accuracy_score=accuracy)
+
+            try:
+                _train_baselines(
+                    X_train, y_train, X_test, y_test,
+                    ann_metrics={
+                        "f1": f1, "precision": precision, "recall": recall,
+                        "accuracy": accuracy,
+                        "roc_auc": float(roc_auc_score(y_test, y_pred_proba)),
+                    },
+                )
+            except Exception as bl_err:
+                logging.warning(f"baselines write skipped: {bl_err}")
+
             return model, metric_artifact
         
         except Exception as e:

@@ -1,0 +1,58 @@
+Final Project Submission and Presentation Guidelines
+
+Hi Everyone,
+
+Please carefully review the following instructions for your Final Project Submission and Presentations.
+Final Project Submission (Report + Code + Slides)
+
+Each group must submit the following:
+
+    Final Report (PDF)
+    This should represent the complete work of your project, building on your proposal and interim report.
+
+    Maximum 20 pages for main content
+    Additional materials (e.g., references, extended charts) can go in the appendix
+    No strict research formatting required, but ensure it is clear, well-structured, and free of errors
+
+    Slide Deck (PPT or PDF)
+    To be used during your final presentation/demo.
+    Source Code & Artifacts
+    Submit a GitHub repository that includes:
+
+    README.md with setup and execution instructions
+    Requirements.txt with all required packages and versions
+    Steps to reproduce your results
+    Clean and well-organized folder structure
+
+Final Report Must Include
+
+    Abstract
+    Problem Statement
+    Related Work / Literature Review
+    Model Architecture & Implementation Details
+    Evaluation Results
+    Insights, Limitations, and Future Scope
+    Contribution of Each Team Member
+    Tools and Libraries Used
+    References
+
+Presentation Requirements
+
+Each group is expected to:
+
+    Deliver a live demo of your working model
+    Prepare a backup (recorded demo) in case of technical issues
+    Present clearly and professionally
+
+Important: Due to limited presentation time, it is strongly recommended that one primary speaker leads the presentation to ensure a smooth flow and avoid unnecessary delays.
+
+Make sure to cover:
+
+    Project objective and any novel contributions
+    Comparison with baseline or state-of-the-art methods
+    Use of clear visuals (graphs, tables, etc.) to support your results
+
+Submission Notes
+
+    Only one submission per group is required
+    Clearly list all group members and their individual contributions

@@ -20,6 +20,53 @@ from src.logger import logging
 from src.utils.main_utils import save_object, save_numpy_array_data, read_yaml_file
 logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 
+import json
+from datetime import datetime, timezone
+
+TRAINING_DIST_PATH = os.path.join("artifact", "training_distribution.json")
+
+
+def _write_training_distribution(raw_df: pd.DataFrame, schema: dict) -> None:
+    """Persist a snapshot of the training data's feature distributions.
+
+    Used later by drift monitoring to bucket live predictions and compute PSI.
+    """
+    os.makedirs(os.path.dirname(TRAINING_DIST_PATH), exist_ok=True)
+
+    target = schema.get("target_column")
+    numerical_cols = [c for c in schema.get("numerical_columns", []) if c != target and c in raw_df.columns]
+    categorical_cols = [c for c in schema.get("categorical_columns", []) if c in raw_df.columns]
+
+    numerical = {}
+    for col in numerical_cols:
+        series = pd.to_numeric(raw_df[col], errors="coerce").dropna()
+        if series.empty:
+            continue
+        hist, edges = np.histogram(series.values, bins=10)
+        numerical[col] = {
+            "min": float(series.min()),
+            "max": float(series.max()),
+            "mean": float(series.mean()),
+            "std": float(series.std() or 0.0),
+            "bins": [float(e) for e in edges.tolist()],
+            "counts": [int(c) for c in hist.tolist()],
+        }
+
+    categorical = {}
+    for col in categorical_cols:
+        counts = raw_df[col].astype(str).value_counts().to_dict()
+        categorical[col] = {str(k): int(v) for k, v in counts.items()}
+
+    snapshot = {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "rows": int(len(raw_df)),
+        "numerical": numerical,
+        "categorical": categorical,
+    }
+    with open(TRAINING_DIST_PATH, "w") as f:
+        json.dump(snapshot, f, indent=2)
+    logging.info(f"Wrote training distribution snapshot → {TRAINING_DIST_PATH}")
+
 
 class DataTransformation:
     def __init__(self, data_ingestion_artifact: DataIngestionArtifact,
@@ -195,6 +242,11 @@ class DataTransformation:
             # Load train and test data
             df = pd.read_csv(self.data_ingestion_artifact.feature_store_file_path)
             logging.info("data loaded")
+
+            try:
+                _write_training_distribution(df, self._schema_config)
+            except Exception as snap_err:
+                logging.warning(f"training distribution snapshot skipped: {snap_err}")
             # Apply transformation steps to train
             df=self.handle_duplicates_and_missing_values(df)
             df=self.drop_not_important_features(df)

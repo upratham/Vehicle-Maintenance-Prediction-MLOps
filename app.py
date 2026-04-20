@@ -1,9 +1,20 @@
-from fastapi import FastAPI, Request
+import asyncio
+import io
+import json
+import logging as _py_logging
+import os
+import queue
+import threading
+from contextlib import redirect_stdout, redirect_stderr
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, RedirectResponse
+from pydantic import BaseModel
+from starlette.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from uvicorn import run as app_run
 
 from typing import Optional
@@ -11,7 +22,12 @@ from typing import Optional
 from src.constants import APP_HOST, APP_PORT
 from src.pipline.prediction_pipeline import VehicleData, VehicleDataClassifier
 from src.pipline.training_pipeline import TrainPipeline
+from src.insights import pick_service, feature_impacts
+from src.drift import log_prediction, compute_drift
 from src.logger import logging
+
+MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")
+BASELINES_PATH = os.path.join("artifact", "baselines.json")
 
 app = FastAPI()
 
@@ -186,6 +202,191 @@ async def predictRouteClient(request: Request):
             context={"request": request, "context": f"Error: {e}"},
             status_code=500,
         )
+
+
+class PredictPayload(BaseModel):
+    Reported_Issues: int
+    Vehicle_Age: int
+    Engine_Size: float
+    Odometer_Reading: float
+    Accident_History: int
+    Fuel_Efficiency: float
+    Tire_Condition: str
+    Brake_Condition: str
+    Battery_Status: str
+    Vehicle_Model: str
+    Fuel_Type: str
+    Transmission_Type: str
+
+
+@app.post("/predict")
+async def predict_json(payload: PredictPayload):
+    """JSON prediction endpoint consumed by the React frontend."""
+    try:
+        vehicle_data = VehicleData(**payload.model_dump())
+        vehicle_df = vehicle_data.get_vehicle_input_data_frame()
+        model_predictor = VehicleDataClassifier()
+        raw_prediction = model_predictor.predict(dataframe=vehicle_df)[0]
+        score = float(raw_prediction[0]) if hasattr(raw_prediction, "__len__") else float(raw_prediction)
+        value = 1 if score >= 0.5 else 0
+        status = "Maintenance Required" if value == 1 else "No Maintenance Needed"
+
+        raw = payload.model_dump()
+        svc = pick_service(raw, score)
+        impacts = feature_impacts(raw)
+
+        response = {
+            "status": status,
+            "score": score,
+            "label": value,
+            "service": {
+                "name": svc.service,
+                "cost_low": svc.cost_low,
+                "cost_high": svc.cost_high,
+                "hours_low": svc.hours_low,
+                "hours_high": svc.hours_high,
+                "notes": svc.notes,
+            },
+            "impacts": [
+                {"feature": f.feature, "value": str(f.value), "contribution": f.contribution}
+                for f in impacts
+            ],
+            "explanations": [
+                {
+                    "feature": f.feature,
+                    "value": str(f.value),
+                    "shap": round(f.contribution, 4),
+                    "direction": "+" if f.contribution >= 0 else "-",
+                }
+                for f in impacts[:5]
+            ],
+        }
+
+        try:
+            log_prediction(raw, response)
+        except Exception as log_err:
+            logging.warning(f"prediction logging skipped: {log_err}")
+
+        return JSONResponse(response)
+    except Exception as e:
+        logging.error(f"/predict failed: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MLOps surface: model registry, retrain (SSE), drift
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _read_json(path: str) -> Optional[dict]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception as exc:
+        logging.warning(f"read {path} failed: {exc}")
+        return None
+
+
+@app.get("/model_info")
+async def model_info():
+    """Expose the current model registry manifest + baselines for the Ops page."""
+    manifest = _read_json(MODEL_REGISTRY_PATH) or {}
+    baselines = _read_json(BASELINES_PATH) or {}
+    if "baselines" not in manifest or not manifest.get("baselines"):
+        manifest["baselines"] = baselines.get("models", [])
+    manifest["baselines_computed_at"] = baselines.get("computed_at")
+    return JSONResponse(manifest)
+
+
+@app.get("/drift")
+async def drift_endpoint(window: str = "7d"):
+    try:
+        return JSONResponse(compute_drift(window=window))
+    except Exception as e:
+        logging.error(f"/drift failed: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+class _SSEHandler(_py_logging.Handler):
+    """Forward log records into a thread-safe queue for SSE streaming."""
+
+    def __init__(self, q: "queue.Queue[str]"):
+        super().__init__(level=_py_logging.INFO)
+        self.q = q
+        self.setFormatter(_py_logging.Formatter("%(asctime)s  %(levelname)s  %(message)s",
+                                                datefmt="%H:%M:%S"))
+
+    def emit(self, record: _py_logging.LogRecord) -> None:  # noqa: D401
+        try:
+            self.q.put_nowait(self.format(record))
+        except Exception:
+            pass
+
+
+def _run_training(q: "queue.Queue[str]") -> None:
+    """Run the training pipeline on a worker thread, piping logs into the queue."""
+    root = _py_logging.getLogger()
+    handler = _SSEHandler(q)
+    root.addHandler(handler)
+    try:
+        before = _read_json(MODEL_REGISTRY_PATH) or {}
+        q.put_nowait("── Starting training pipeline ──")
+        TrainPipeline().run_pipeline()
+        after = _read_json(MODEL_REGISTRY_PATH) or {}
+        summary = {
+            "event": "done",
+            "promoted": bool(after.get("promoted")),
+            "old_metrics": before.get("metrics", {}),
+            "new_metrics": after.get("metrics", {}),
+            "new_version": after.get("version"),
+        }
+        q.put_nowait("__SUMMARY__:" + json.dumps(summary))
+    except Exception as exc:
+        q.put_nowait(f"ERROR: {exc}")
+        q.put_nowait("__SUMMARY__:" + json.dumps({"event": "error", "error": str(exc)}))
+    finally:
+        q.put_nowait("__DONE__")
+        root.removeHandler(handler)
+
+
+@app.post("/train")
+async def train_endpoint(x_ops_token: Optional[str] = Header(default=None)):
+    """Gate on OPS_TOKEN header; stream training logs via SSE; return metric diff."""
+    expected = os.getenv("OPS_TOKEN")
+    if expected and x_ops_token != expected:
+        raise HTTPException(status_code=401, detail="invalid ops token")
+
+    q: "queue.Queue[str]" = queue.Queue()
+    worker = threading.Thread(target=_run_training, args=(q,), daemon=True)
+    worker.start()
+
+    def _next(timeout: float) -> Optional[str]:
+        try:
+            return q.get(timeout=timeout)
+        except Exception:
+            return None
+
+    async def event_stream():
+        yield f": retrain started at {datetime.now(timezone.utc).isoformat()}\n\n"
+        while True:
+            loop = asyncio.get_event_loop()
+            line = await loop.run_in_executor(None, _next, 1.0)
+            if line is None:
+                if not worker.is_alive() and q.empty():
+                    break
+                yield ": keepalive\n\n"
+                continue
+            if line == "__DONE__":
+                yield "event: done\ndata: {}\n\n"
+                break
+            if line.startswith("__SUMMARY__:"):
+                yield f"event: summary\ndata: {line[len('__SUMMARY__:'):]}\n\n"
+                continue
+            yield f"data: {json.dumps({'line': line})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 if __name__ == "__main__":

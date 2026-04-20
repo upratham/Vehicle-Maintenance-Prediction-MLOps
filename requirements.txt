@@ -23,6 +23,8 @@ setuptools
 clearml
 clearml-agent
 tensorflow
+shap
+xgboost
 
 
 
