@@ -1,32 +1,41 @@
-ipykernel
-pandas
-numpy
-matplotlib
-plotly
-seaborn
-scikit-learn
-pymongo
-from_root
-dill
-certifi
-PyYAML
-boto3
-mypy-boto3-s3
-botocore
-fastapi
-python-multipart
-uvicorn
-jinja2
-imblearn
-python-dotenv
-setuptools
-clearml
-clearml-agent
-tensorflow
-shap
-xgboost
-optuna
+# ── Core data science ──────────────────────────────────────────────────────
+ipykernel>=7.1.0
+pandas>=2.3.3
+numpy>=2.4.1
+matplotlib>=3.10.8
+plotly>=6.5.2
+seaborn>=0.13.2
 
+# ── ML / modelling ─────────────────────────────────────────────────────────
+scikit-learn>=1.8.0
+imbalanced-learn>=0.12.0       # SMOTE
+xgboost                        # baseline comparator
+optuna>=3.0.0                  # HPO search (Optuna backend)
+shap                           # per-prediction feature attribution
+tensorflow>=2.16.0             # production model evaluation (S3 models may be ANNs)
 
+# ── MLOps / experiment tracking ────────────────────────────────────────────
+clearml>=1.14.0                # experiment tracking + HPO logging
+clearml-agent                  # optional: run ClearML tasks as remote agents
 
+# ── Database ───────────────────────────────────────────────────────────────
+pymongo>=4.16.0
+certifi>=2026.1.4              # TLS CA bundle for MongoDB Atlas
 
+# ── AWS / cloud storage ────────────────────────────────────────────────────
+boto3>=1.42.30
+mypy-boto3-s3>=1.42.21
+botocore>=1.42.30
+
+# ── Web / API ──────────────────────────────────────────────────────────────
+fastapi>=0.128.0
+python-multipart>=0.0.21
+uvicorn>=0.40.0
+jinja2>=3.1.6
+
+# ── Utilities ──────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+PyYAML>=6.0.3
+dill>=0.4.0                    # serialising sklearn pipelines
+from-root>=1.3.0
+setuptools<82.0.0

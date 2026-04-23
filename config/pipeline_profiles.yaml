@@ -5,7 +5,7 @@ profiles:
       collection: vehicle_maintenance_data
       target_column: NEED_MAINTENANCE
     model:
-      type: rf
+      type: rf_hpo
       version_prefix: vm
     paths:
       schema: config/schema.yaml
@@ -17,7 +17,7 @@ profiles:
       collection: cars_hyundai
       target_column: Anomaly Indication
     model:
-      type: dt
+      type: dt_hpo
       version_prefix: hyu
     paths:
       schema: config/schema_cars_hyundai.yaml

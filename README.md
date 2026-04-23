@@ -1,354 +1,409 @@
-# 🚗 Vehicle Maintenance Prediction
-### An End-to-End MLOps System (MSML605 Final Project)
-
----
+# Vehicle Maintenance Prediction — MLOps System
+### MSML 605 Final Project · End-to-End Multi-Model Pipeline
 
 **Live Demo (Render):** https://vehicle-maintenance-prediction-mlops.onrender.com
 
-A production-grade MLOps system that predicts near-term vehicle maintenance needs. It ships with **live drift monitoring, one-click retraining, experiment tracking, and SHAP-grounded prediction explanations** surfaced directly in the product UI — not just a classifier wrapped in a form.
+A production-grade MLOps system that trains, evaluates, and serves three independent vehicle-health classifiers — one per dataset — through a single unified pipeline. Each model gets its own dataset-specific transformer class, its own ClearML-logged Optuna HPO run, and its own S3 model registry entry.
 
-> 🎯 **Goal:** Predict whether a vehicle requires maintenance, and make the entire ML lifecycle (train → evaluate → promote → serve → monitor → retrain) visible and operable from a web dashboard.
+> **Goal:** Cover the full ML lifecycle (ingest → validate → transform → HPO train → evaluate → promote → serve → monitor → retrain) across three datasets, with every experiment tracked in ClearML and every model promoted via S3.
 
 See **[PRESENTATION.md](PRESENTATION.md)** for the full project deep-dive and demo script.
 
 ---
 
-## ⚡ Quick Start (get it running in ~5 minutes)
+## Three datasets, three models
+
+| Profile | Dataset | Rows | Target | Model | HPO |
+|---|---|---|---|---|---|
+| `vehicle_maintenance` | `vehicle_maintenance_data.csv` | 50 000 | `Need_Maintenance` (binary) | Random Forest | Optuna (20 trials, 3-fold CV F1) |
+| `cars_hyundai` | `cars_hyundai.csv` | 1 100 | `Anomaly Indication` (binary) | Decision Tree | Optuna (20 trials, 3-fold CV F1) |
+| `engine_data` | `engine_data.csv` | 19 535 | `Engine Condition` (binary) | Random Forest | Optuna (20 trials, 3-fold CV F1) |
+
+Each profile runs the same six-stage pipeline sequentially. All HPO trial metrics stream to ClearML in real time.
+
+---
+
+## Quick Start (≈ 5 minutes)
 
 ### Prerequisites
-- **Python 3.10+** (virtualenv/conda)
-- **Node 20+** and **npm** (for the React frontend)
-- **MongoDB Atlas** connection string (or any reachable Mongo URI with the project data loaded)
-- **AWS** credentials with access to the S3 model bucket
-- **ClearML** account (free tier at [app.clear.ml](https://app.clear.ml)) — *optional for serving, required for training*
+- **Python 3.12** (required — see `pyproject.toml`)
+- **Node 20+** and **npm** (React frontend)
+- **MongoDB Atlas** URI (or any reachable Mongo with the project data loaded)
+- **AWS** credentials with read/write access to the S3 model bucket
+- **ClearML** account (free at [app.clear.ml](https://app.clear.ml)) — required for training, optional for serving
 
-### 1. Clone and enter the repo
+### 1. Clone
 ```bash
 git clone https://github.com/upratham/Vehicle-Maintenance-Prediction-MLOps.git
 cd Vehicle-Maintenance-Prediction-MLOps
 ```
 
-### 2. Python environment + dependencies
+### 2. Python environment
 ```bash
-# Option A — venv (recommended for local dev)
-python3.10 -m venv venv
+python3.12 -m venv venv
 
 # Windows (PowerShell)
 .\venv\Scripts\Activate.ps1
-
-# macOS (zsh/bash)
+# macOS / Linux
 source venv/bin/activate
 
-# Linux (bash)
-source venv/bin/activate
-
-pip install -r requirements.txt
-
-# Option B — conda
-conda create -n vehicle python=3.10 -y
-conda activate vehicle
 pip install -r requirements.txt
 ```
 
-### 3. Frontend dependencies
+### 3. Frontend
 ```bash
-cd frontend
-npm install
-cd ..
+cd frontend && npm install && cd ..
 ```
 
 ### 4. Environment variables
 
-Create a `.env` file in the project root:
+Create `.env` in the project root:
 
 ```bash
-# ── MongoDB (required for training & drift logging) ──
-CONNECTION_URL=mongodb+srv://<username>:<password>@cluster.mongodb.net/
-DB_USERNAME=vehicle_db
-COLLECTION_NAME=vehicles
+# MongoDB (required for training)
+CONNECTION_URL=mongodb+srv://<user>:<pass>@cluster.mongodb.net/
+DB_USERNAME=605_Project_Data
+COLLECTION_NAME=vehicle_maintenance_data
 
-# ── AWS S3 (required to load the deployed model) ──
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
+# AWS S3 (required to load / push models)
+AWS_ACCESS_KEY_ID=your_key
+AWS_SECRET_ACCESS_KEY=your_secret
 AWS_REGION=us-east-1
 
-# ── ClearML experiment tracking (required for training) ──
+# ClearML (required for training)
 CLEARML_API_HOST=https://api.clear.ml
 CLEARML_API_ACCESS_KEY=your_clearml_access_key
 CLEARML_API_SECRET_KEY=your_clearml_secret_key
 
-# ── Retrain endpoint auth ──
-OPS_TOKEN=any-long-random-string-you-pick
+# Retrain endpoint auth
+OPS_TOKEN=any-long-random-string
 
-# ── Runtime ──
 APP_ENV=dev
 ```
 
-> 💡 Ask a team member (or read `PRESENTATION.md` § 14) for the actual credential values. Never commit `.env`.
+> Never commit `.env`. Ask a team member for the actual values, or see `PRESENTATION.md § 14`.
 
-### 5. Start the servers
-
-**Easiest — use the dev scripts:**
+### 5. Start servers
 ```bash
-bash .dev/dev.sh    # both backend + frontend in one terminal
+bash .dev/dev.sh          # backend + frontend together
 # or separately:
-bash .dev/be.sh     # FastAPI on http://localhost:5000
-bash .dev/fe.sh     # Vite dev server on http://localhost:3000
+bash .dev/be.sh           # FastAPI on http://localhost:5000
+bash .dev/fe.sh           # Vite on http://localhost:3000
 ```
 
-Press `r` to restart both, `q` to quit. Pass `s` to run in staging mode: `bash .dev/dev.sh s`.
-
-**Manual (if the dev scripts aren't your thing):**
-```bash
-# Terminal 1 — backend
-
-# Windows (PowerShell)
-.\venv\Scripts\Activate.ps1
-
-# macOS (zsh/bash)
-source venv/bin/activate
-
-# Linux (bash)
-source venv/bin/activate
-
-python -m uvicorn app:app --host 0.0.0.0 --port 5000 --reload
-
-# Terminal 2 — frontend
-cd frontend
-npm run dev
-```
-
-### 6. Open it up
-- **Main predictor:** http://localhost:3000
-- **Ops dashboard:** http://localhost:3000/ops (model registry, baselines, drift chart, retrain)
-- **Backend API docs:** http://localhost:5000/docs (FastAPI Swagger UI)
-
-The Vite dev server proxies `/predict`, `/model_info`, `/drift`, and `/train` to the backend automatically — no CORS setup needed in dev.
+### 6. Open
+| URL | What you get |
+|---|---|
+| http://localhost:3000 | Predictor (VIN decode + SHAP explanation) |
+| http://localhost:3000/ops | Ops dashboard (registry, baselines, drift, retrain) |
+| http://localhost:5000/docs | FastAPI Swagger UI |
 
 ---
 
-## 🏋️ Running a training pipeline locally
-
-The one-click retrain button on `/ops` is the recommended path, but you can also trigger training from the CLI:
+## Running the training pipeline
 
 ```bash
 python demo.py
 ```
 
-This runs `TrainPipeline.run_pipeline()` end-to-end:
-1. Ingest from MongoDB
-2. Validate against `config/schema.yaml`
-3. Transform + SMOTE oversample
-4. Train the Keras ANN + sklearn baselines (LR, RF, XGBoost)
-5. Log everything to ClearML (check [app.clear.ml](https://app.clear.ml))
-6. Evaluate candidate vs. current deployed model
-7. Promote to S3 if F1 beats the threshold
+Runs `TrainPipeline.run_pipeline()` across all three profiles in sequence. Local CSVs in `data/` are used automatically — MongoDB is only hit if a matching CSV is not found, avoiding slow cloud round-trips.
 
-Artifacts land in `artifact/<timestamp>/` and the preprocessor gets saved to `preprocessor_obj/preprocessing.pkl`.
+To run a single profile:
+
+```python
+from src.pipline.training_pipeline import TrainPipeline
+TrainPipeline().run_pipeline(profile_names=["engine_data"])
+```
+
+To force a fresh MongoDB fetch and re-sync:
+
+```python
+TrainPipeline().run_pipeline(refresh_collections=True)
+```
+
+Artifacts land in `artifact/<profile>/<timestamp>/`. The preprocessor is saved to `preprocessor_obj/<profile>/preprocessing.pkl`.
 
 ---
 
-## 🏗️ System architecture
+## Pipeline stages (per profile)
 
 ```
-MongoDB Atlas                                             AWS S3
-    │                                                       ▲
-    ▼                                                       │
-Data Ingestion ─► Validation ─► Transformation ─► Trainer ─►┤  Model registry
-(src/components)   (YAML schema)  (RobustScaler,    (Keras  │  + baselines +
-                                   OHE, ordinal,     ANN +  │  distribution
-                                   SMOTE)            sklearn│  snapshot
-                                                    baselines)
-                                                            │
-ClearML (experiment tracking) ◄─────┐                       │
-                                    │                       │
-                                    ▼                       │
-                            FastAPI (app.py) ───────────────┘
-                            /predict  /model_info
-                            /train    /drift
-                                    │
-                                    ▼
-                           React UI (frontend/)
-                           • Main: VIN decode + SHAP-explained prediction
-                           • /ops: registry, drift, retrain console
-                                    │
-                                    ▼
-                           Docker → ECR → EC2 (GitHub Actions)
+data/                    MongoDB Atlas (fallback)
+  └─ <collection>.csv
+         │
+         ▼
+ 1. Data Ingestion       Loads local CSV (or fetches from MongoDB).
+         │               Writes to artifact/<profile>/<ts>/data_ingestion/
+         ▼
+ 2. Data Validation      Checks column names + types against config/schema_<profile>.yaml.
+         │               Fails early on schema drift.
+         ▼
+ 3. Data Transformation  Profile-specific class (see below).
+         │               Emits training_distribution.json for drift comparison.
+         ▼
+ 4. Model Trainer HPO    Profile-specific class runs Optuna HPO.
+         │               Every trial F1 is streamed to ClearML (hpo/cv_f1).
+         │               Best params stored in ClearML task + baselines.json.
+         ▼
+ 5. Model Evaluation     Compares candidate F1 vs. deployed model on S3.
+         │               Requires F1 delta >= 0.02 to promote.
+         ▼
+ 6. Model Pusher         Uploads winning model to S3.
+                         Writes model_registry.json (version, SHA-256, metrics).
+```
+
+### Transformation classes
+
+| Class | Profile | Key steps |
+|---|---|---|
+| `VehicleMaintenanceDataTransformation` | `vehicle_maintenance` | Drop low-signal features → MI filter → outlier capping (IQR) → OrdinalEncoder + OHE + RobustScaler → SMOTE |
+| `HyundaiCarsDataTransformation` | `cars_hyundai` | OHE + RobustScaler (no SMOTE — dataset is balanced) |
+| `EngineDataTransformation` | `engine_data` | RobustScaler only (all-numeric dataset) → SMOTE |
+| `DataTransformation` | dispatcher | Selects the right class by `profile_name` (same `__new__` pattern as model trainer) |
+
+### Trainer classes
+
+| Class | Profile | Model | Hyperparameter search space |
+|---|---|---|---|
+| `VehicleMaintenanceModelTrainer` | `vehicle_maintenance` | `RandomForestClassifier` | `n_estimators` [100–600], `max_depth` [4–30], `min_samples_leaf` [1–10], `min_samples_split` [2–20], `max_features` {sqrt, log2} |
+| `HyundaiCarsModelTrainer` | `cars_hyundai` | `DecisionTreeClassifier` | `max_depth` [3–25], `min_samples_leaf` [1–20], `min_samples_split` [2–30], `criterion` {gini, entropy}, `max_features` {sqrt, log2, all} |
+| `EngineDataModelTrainer` | `engine_data` | `RandomForestClassifier` | `n_estimators` [100–600], `max_depth` [3–25], `min_samples_leaf` [1–10], `min_samples_split` [2–20], `max_features` {sqrt, log2} |
+| `ModelTrainer` | dispatcher | — | Selects trainer by `profile_name` via `__new__` |
+
+HPO trial count and CV folds are configurable per profile via `params.hpo_trials` and `params.hpo_cv_folds` in `src/constants/__init__.py` or the profile's model YAML.
+
+---
+
+## System architecture
+
+```
+data/<collection>.csv  ──┐
+MongoDB Atlas  ──────────┤ (fallback if CSV missing)
+                         │
+                         ▼
+                  Data Ingestion
+                         │
+           ┌─────────────┼─────────────┐
+           ▼             ▼             ▼
+      vehicle_     cars_hyundai   engine_data
+      maintenance  (HyundaiCars   (EngineData
+      (VehicleMaint Transform)    Transform)
+       Transform)
+           │             │             │
+           └─────────────┼─────────────┘
+                         ▼
+               Profile-specific HPO Trainer
+              (Optuna trials → ClearML logging)
+                         │
+                         ▼
+                  Model Evaluation
+               (F1 vs. S3 production model)
+                         │
+                    (if accepted)
+                         ▼
+               Model Pusher → AWS S3
+               model_registry.json
+                         │
+                         ▼
+            ClearML  ←── FastAPI (app.py)
+          (experiment        │
+           tracking)    /predict  /model_info
+                        /train    /drift
+                             │
+                             ▼
+                     React UI (frontend/)
+                   • / : predictor + SHAP bars
+                   • /ops : registry, drift, retrain
+                             │
+                             ▼
+                  Docker → ECR → EC2 (GitHub Actions)
 ```
 
 ---
 
-## 🌐 API endpoints
+## API endpoints
 
 | Route | Method | Description | Auth |
 |---|---|---|---|
-| `/` | GET | Legacy HTML form (still works) | — |
+| `/` | GET | Legacy HTML form | — |
 | `/predict` | POST | JSON prediction + SHAP explanations | — |
-| `/model_info` | GET | Current model version, hash, metrics, baselines | — |
+| `/model_info` | GET | Version, hash, metrics, baselines for all profiles | — |
 | `/drift?window=7d` | GET | Per-feature PSI vs. training distribution | — |
-| `/train` | POST | Streams training logs via SSE; returns old-vs-new metrics | `X-Ops-Token` header |
+| `/train` | POST | SSE-streamed training logs; returns old-vs-new metric diff | `X-Ops-Token` |
 | `/docs` | GET | FastAPI Swagger UI | — |
 
 ---
 
-## 🛠️ Tech stack
+## Tech stack
 
 | Layer | Tool | Purpose |
 |---|---|---|
-| **Language** | Python 3.10, TypeScript 5 | Backend + frontend |
-| **Backend** | FastAPI + Uvicorn | JSON API + SSE |
-| **Frontend** | React 19 + Vite + Tailwind | `/` predictor, `/ops` dashboard |
-| **Data store** | MongoDB Atlas | Raw training data + prediction logs |
-| **Model registry** | AWS S3 | Versioned `model.pkl` + manifest |
-| **Experiment tracking** | ClearML (hosted) | Hyperparams, scalars, confusion matrix |
-| **Explainability** | SHAP | Per-prediction feature attribution |
-| **Training** | Keras (TF), scikit-learn, imblearn (SMOTE) | ANN + baselines |
-| **Container** | Docker | Reproducible runtime |
-| **Compute** | AWS EC2 + ECR | Self-hosted runner, image registry |
-| **CI/CD** | GitHub Actions | Build → push → pull → restart |
-| **Drift stat** | PSI (Population Stability Index) | Marginal distribution shift |
+| Language | Python 3.12, TypeScript 5 | Backend + frontend |
+| Backend | FastAPI + Uvicorn | JSON API + SSE |
+| Frontend | React 19 + Vite + Tailwind | Predictor UI + Ops dashboard |
+| Data store | MongoDB Atlas | Raw training data + prediction logs |
+| Local cache | `data/<collection>.csv` | Avoids MongoDB round-trip on every run |
+| Model registry | AWS S3 | Versioned `model.pkl` + `model_registry.json` per profile |
+| Experiment tracking | ClearML | HPO curves, test metrics, best params, model artifact |
+| HPO | Optuna | In-process hyperparameter search (20 trials, 3-fold CV) |
+| Explainability | SHAP | Per-prediction feature attribution |
+| ML | scikit-learn, imbalanced-learn (SMOTE), XGBoost | Classifiers + baselines |
+| Deep learning | TensorFlow / Keras | Production model evaluation (legacy ANN models on S3) |
+| Container | Docker | Reproducible runtime |
+| Compute | AWS EC2 + ECR | Self-hosted runner, image registry |
+| CI/CD | GitHub Actions | Build → push → pull → restart |
+| Drift detection | PSI (Population Stability Index) | Marginal distribution shift |
 
 ---
 
-## 🗂️ Project structure
+## Project structure
 
 ```
 Vehicle-Maintenance-Prediction-MLOps/
 │
-├── app.py                        # FastAPI entry point
-├── demo.py                       # CLI training trigger
-├── requirements.txt              # Python deps
-├── Dockerfile                    # Container spec
-├── PRESENTATION.md               # Full project overview + demo script
-│
-├── src/
-│   ├── components/               # Pipeline stages
-│   │   ├── data_ingestion.py
-│   │   ├── data_validation.py
-│   │   ├── data_transformation.py
-│   │   ├── model_trainer.py      # ANN + baselines + ClearML
-│   │   ├── model_evaluation.py
-│   │   └── model_pusher.py       # Writes model_registry.json
-│   ├── pipline/                  # Orchestrators (typo preserved)
-│   │   ├── training_pipeline.py
-│   │   └── prediction_pipeline.py # Serves /predict + SHAP
-│   ├── drift.py                  # PSI computation
-│   ├── insights.py               # Baseline model training utilities
-│   ├── entity/                   # Config + artifact dataclasses
-│   ├── configuration/            # Mongo + AWS connection helpers
-│   ├── cloud_storage/            # S3 wrapper
-│   ├── data_access/
-│   ├── utils/
-│   └── constants/
-│
-├── frontend/                     # React 19 + Vite app
-│   ├── src/
-│   │   ├── App.tsx               # Main predictor
-│   │   ├── pages/Ops.tsx         # MLOps dashboard
-│   │   ├── components/           # VinPanel, ConditionPanel, ResultCard (SHAP bars)
-│   │   └── lib/                  # NHTSA, mapping, ops API helpers
-│   ├── package.json
-│   └── vite.config.ts            # Proxies /predict etc. to :5000 in dev
+├── app.py                         # FastAPI entry point
+├── demo.py                        # CLI pipeline trigger (all 3 profiles)
+├── requirements.txt               # Python deps (pinned minimums)
+├── pyproject.toml                 # Package metadata + dep constraints
+├── Dockerfile
 │
 ├── config/
-│   └── schema.yaml               # Data validation contract
-├── notebooks/                    # EDA + feature engineering
-├── plots/                        # Training visualizations
-├── preprocessor_obj/             # Pickled preprocessor (post-training)
-├── data/                         # CSV inputs
-├── static/                       # Legacy HTML assets
-├── templates/                    # Legacy Jinja templates
+│   ├── pipeline_profiles.yaml     # Profile definitions (dataset, model type, schema path)
+│   ├── schema.yaml                # vehicle_maintenance validation schema
+│   ├── schema_cars_hyundai.yaml   # cars_hyundai validation schema
+│   ├── schema_engine_data.yaml    # engine_data validation schema
+│   ├── model.yaml                 # vehicle_maintenance model config
+│   ├── model_cars_hyundai.yaml    # cars_hyundai model config
+│   └── model_engine_data.yaml     # engine_data model config
 │
-├── .dev/                         # Dev server scripts (dev.sh, fe.sh, be.sh)
-├── .env                          # Local secrets (gitignored)
-├── .env.staging                  # Staging overrides (gitignored)
-└── .github/workflows/aws.yaml    # CI/CD pipeline
+├── src/
+│   ├── components/
+│   │   ├── data_ingestion.py      # CSV-first load (MongoDB fallback)
+│   │   ├── data_validation.py     # Schema validation
+│   │   ├── data_transformation.py # 3 transformer classes + DataTransformation dispatcher
+│   │   ├── model_trainer.py       # 3 HPO trainer classes + ModelTrainer dispatcher
+│   │   ├── model_evaluation.py    # F1 comparison vs. S3 production model
+│   │   └── model_pusher.py        # S3 upload + model_registry.json
+│   ├── pipline/
+│   │   ├── training_pipeline.py   # TrainPipeline.run_pipeline() — multi-profile orchestrator
+│   │   └── prediction_pipeline.py # /predict + SHAP
+│   ├── drift.py                   # PSI computation
+│   ├── insights.py                # Feature impact + service recommendations
+│   ├── entity/
+│   │   ├── config_entity.py       # Config dataclasses (TrainingPipelineConfig etc.)
+│   │   ├── artifact_entity.py     # Artifact dataclasses
+│   │   ├── estimator.py           # Model wrapper
+│   │   └── s3_estimator.py        # S3 model loader
+│   ├── constants/__init__.py      # All constants + default HPO params
+│   ├── configuration/             # MongoDB + AWS connection helpers
+│   ├── cloud_storage/             # S3 wrapper
+│   ├── data_access/               # MongoDB → DataFrame
+│   └── utils/main_utils.py        # load/save object, numpy, YAML helpers
+│
+├── data/                          # Raw CSVs (used as local cache)
+│   ├── vehicle_maintenance_data.csv
+│   ├── cars_hyundai.csv
+│   └── engine_data.csv
+│
+├── preprocessor_obj/              # Pickled ColumnTransformer per profile
+│   ├── vehicle_maintenance/preprocessing.pkl
+│   ├── cars_hyundai/preprocessing.pkl
+│   └── engine_data/preprocessing.pkl
+│
+├── artifact/                      # Per-run artifacts (timestamped, gitignored)
+│   ├── vehicle_maintenance/<ts>/
+│   ├── cars_hyundai/<ts>/
+│   └── engine_data/<ts>/
+│
+├── plots/                         # MI scores + Spearman heatmap (vehicle_maintenance)
+├── frontend/                      # React 19 + Vite app
+│   └── src/
+│       ├── App.tsx                # Main predictor
+│       ├── pages/Ops.tsx          # MLOps dashboard
+│       └── components/            # VinPanel, ConditionPanel, ResultCard (SHAP bars)
+│
+├── .dev/                          # dev.sh, be.sh, fe.sh
+└── .github/workflows/aws.yaml     # CI/CD: build → ECR → EC2
 ```
 
 ---
 
-## 🔄 ML pipeline (what each stage does)
+## ClearML experiment tracking
 
-1. **Data Ingestion** — pulls from MongoDB Atlas, splits into train/test CSVs.
-2. **Data Validation** — checks column names, types, and ranges against `config/schema.yaml`. Fails the pipeline early on schema drift.
-3. **Data Transformation** — drops low-signal features, caps outliers (IQR), ordinal-encodes condition fields, one-hot-encodes nominal fields, `RobustScaler` on numerics, SMOTE on the minority class. Also emits `training_distribution.json` for drift comparison.
-4. **Model Trainer** — trains a Keras ANN (primary) and sklearn baselines (Logistic Regression, Random Forest, XGBoost). Logs hyperparameters, scalars, and the confusion matrix to ClearML. Persists `baselines.json`.
-5. **Model Evaluation** — compares candidate F1 vs. the currently deployed model on S3. Promotion requires an F1 improvement of at least `0.02`.
-6. **Model Pusher** — uploads the winning model to S3 *and* writes `model_registry.json` (version, SHA-256, timestamp, metrics, S3 URI).
+Each training run creates a separate ClearML task per profile:
+
+- **Task type:** `optimizer` (reflects HPO nature)
+- **Scalars logged:**
+  - `hpo/cv_f1` — F1 for every Optuna trial (visible as a curve in ClearML UI)
+  - `hpo/best_cv_f1` — final best cross-validated F1
+  - `test/accuracy`, `test/f1`, `test/precision`, `test/recall`, `test/roc_auc` — held-out test set metrics
+- **Parameters:** `profile_name`, `hpo_best_params` (all best hyperparameters)
+- **Artifact:** `trained_model` (serialised sklearn model)
+
+View runs at [app.clear.ml](https://app.clear.ml) under project `605-Vehicle_Maintainance-project`.
 
 ---
 
-## 🚀 CI/CD pipeline
+## CI/CD pipeline
 
 ```
 Developer pushes to GitHub
-            │
-            ▼
+        │
+        ▼
 GitHub Actions (.github/workflows/aws.yaml)
-            │
-            ▼
+        │
+        ▼
 Build Docker image → Push to AWS ECR
-            │
-            ▼
+        │
+        ▼
 Self-hosted EC2 runner pulls latest image
-            │
-            ▼
+        │
+        ▼
 Container restarted → App live on EC2
 ```
 
-Required GitHub repo secrets:
-
-| Secret | Description |
-|---|---|
-| `AWS_ACCESS_KEY_ID` | AWS programmatic access key |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret access key |
-| `AWS_DEFAULT_REGION` | Target AWS region (`us-east-1`) |
-| `ECR_REPO` | ECR repository URI |
+Required GitHub secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`, `ECR_REPO`.
 
 ---
 
-## 🧪 Smoke test (before demo / submission)
+## Smoke test (before demo / submission)
 
 ```bash
-bash .dev/dev.sh       # start both servers
+bash .dev/dev.sh
 ```
 
-1. Open http://localhost:3000, run a prediction with VIN `1HGCM82633A123456`. **Expect:** verdict + SHAP bar chart.
-2. Open http://localhost:3000/ops. **Expect:** model registry card, baselines table, drift chart.
-3. Click **Retrain** (paste your `OPS_TOKEN`). **Expect:** streaming logs, old-vs-new metric diff, new ClearML task at [app.clear.ml](https://app.clear.ml).
-4. Fire ~20 predictions with varied inputs. Refresh `/ops`. **Expect:** drift chart with per-feature PSI.
+1. Open http://localhost:3000, predict with VIN `1HGCM82633A123456`. Expect: verdict + SHAP bars.
+2. Open http://localhost:3000/ops. Expect: model registry card, baselines table, drift chart.
+3. Click **Retrain** (paste `OPS_TOKEN`). Expect: streamed logs, old-vs-new metric diff, new ClearML tasks.
+4. Fire ~20 predictions with varied inputs. Refresh `/ops`. Expect: drift chart with per-feature PSI.
 
 ---
 
-## 🧰 Troubleshooting
+## Troubleshooting
 
-| Symptom | Likely cause / fix |
+| Symptom | Fix |
 |---|---|
-| `Backend didn't start` from `be.sh` | `venv` missing or `requirements.txt` not installed. Re-run step 2. |
-| `npm run dev` fails with TS errors | Run `npm install` inside `frontend/` first. |
-| `/predict` returns 500 | Model not on S3 yet, or AWS creds missing. Run `python demo.py` once or check `.env`. |
+| `demo.py` hangs at "Exporting data from mongodb" | Add local CSVs to `data/` — the pipeline uses them automatically and skips MongoDB. |
+| `/predict` returns 500 | No model on S3 yet. Run `python demo.py` at least once. Check `.env` AWS credentials. |
 | `/train` returns 401 | `X-Ops-Token` header doesn't match `OPS_TOKEN` in `.env`. |
-| ClearML complains about credentials | Run `clearml-init` once to set up `~/clearml.conf`, or set the three `CLEARML_*` env vars. |
-| Frontend can't reach backend | Confirm `vite.config.ts` proxy points at `http://localhost:5000` and backend is actually up. |
+| ClearML not logging | Run `clearml-init` once, or set `CLEARML_API_HOST/ACCESS_KEY/SECRET_KEY` in `.env`. |
+| `npm run dev` TS errors | Run `npm install` inside `frontend/` first. |
+| Unicode `→` in logs on Windows | Already fixed in source; delete `src/components/__pycache__` if the old `.pyc` persists. |
 
 ---
 
-## 👥 Authors
+## Authors
 
 | Name | Role |
 |---|---|
-| **Prathamesh Uravane** | Deployment & MLOps lead |
-| **Sankeerth B** | Data & Validation lead |
-| **Claude B** | Modeling & Experimentation lead |
+| Prathamesh Uravane | Deployment & MLOps lead |
+| Sankeerth B | Data & Validation lead |
+| Claude B | Modeling & Experimentation lead |
 
 Full contribution breakdown in [PRESENTATION.md § 12](PRESENTATION.md).
 
 ---
 
-## 📄 License
+## License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-⭐ *If you found this project helpful or interesting, please consider giving it a star!*

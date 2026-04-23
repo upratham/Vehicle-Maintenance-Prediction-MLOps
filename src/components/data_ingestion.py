@@ -1,6 +1,7 @@
 import os
 import sys
 
+import pandas as pd
 from pandas import DataFrame
 from sklearn.model_selection import train_test_split
 
@@ -24,22 +25,35 @@ class DataIngestion:
     def export_data_into_feature_store(self)->DataFrame:
         """
         Method Name :   export_data_into_feature_store
-        Description :   This method exports data from mongodb to csv file
-        
+        Description :   This method exports data from mongodb to csv file, with a
+                        stable local cache so repeat runs skip the network round-trip.
+
         Output      :   data is returned as artifact of data ingestion components
         On Failure  :   Write an exception log and then raise an exception
         """
         try:
-            logging.info(f"Exporting data from mongodb")
-            my_data = Proj1Data(database_name=self.data_ingestion_config.database_name)
-            dataframe = my_data.export_collection_as_dataframe(collection_name=
-                                                                   self.data_ingestion_config.collection_name)
+            feature_store_file_path = self.data_ingestion_config.feature_store_file_path
+            collection_name = self.data_ingestion_config.collection_name
+
+            # Use local CSV in data/ if available — skips the MongoDB network round-trip
+            local_csv_path = os.path.join("data", f"{collection_name}.csv")
+
+            if os.path.exists(local_csv_path) and os.path.getsize(local_csv_path) > 0:
+                logging.info(
+                    f"[{collection_name}] Local CSV found — loading from {local_csv_path}, "
+                    "skipping MongoDB fetch."
+                )
+                dataframe = pd.read_csv(local_csv_path)
+            else:
+                logging.info(f"Exporting data from mongodb (collection={collection_name})")
+                my_data = Proj1Data(database_name=self.data_ingestion_config.database_name)
+                dataframe = my_data.export_collection_as_dataframe(collection_name=collection_name)
+
             logging.info(f"Shape of dataframe: {dataframe.shape}")
-            feature_store_file_path  = self.data_ingestion_config.feature_store_file_path
             dir_path = os.path.dirname(feature_store_file_path)
-            os.makedirs(dir_path,exist_ok=True)
+            os.makedirs(dir_path, exist_ok=True)
             logging.info(f"Saving exported data into feature store file path: {feature_store_file_path}")
-            dataframe.to_csv(feature_store_file_path,index=False,header=True)
+            dataframe.to_csv(feature_store_file_path, index=False, header=True)
             return dataframe
 
         except Exception as e:

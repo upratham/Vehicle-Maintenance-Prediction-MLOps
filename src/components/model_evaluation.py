@@ -80,10 +80,20 @@ class ModelEvaluation:
             best_model = self.get_best_model()
             if best_model is not None:
                 logging.info(f"Computing F1_Score for production model..")
-                y_pred_proba = best_model.predict(x).flatten() 
-                y_hat_best_model = (y_pred_proba >= 0.5).astype(int)  
-                best_model_f1_score = f1_score(y, y_hat_best_model)
-                logging.info(f"F1_Score-Production Model: {best_model_f1_score}, F1_Score-New Trained Model: {trained_model_f1_score}")
+                try:
+                    y_pred_proba = best_model.predict(x).flatten()
+                    y_hat_best_model = (y_pred_proba >= 0.5).astype(int)
+                    best_model_f1_score = f1_score(y, y_hat_best_model)
+                    logging.info(
+                        f"F1_Score-Production Model: {best_model_f1_score}, "
+                        f"F1_Score-New Trained Model: {trained_model_f1_score}"
+                    )
+                except Exception as best_model_err:
+                    logging.warning(
+                        "Skipping production-model comparison because the deployed model "
+                        f"is incompatible with the current transformed features: {best_model_err}"
+                    )
+                    best_model_f1_score = None
             
             tmp_best_model_score = 0 if best_model_f1_score is None else best_model_f1_score
             result = EvaluateModelResponse(trained_model_f1_score=trained_model_f1_score,
