@@ -23,15 +23,12 @@ logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 import json
 from datetime import datetime, timezone
 
-TRAINING_DIST_PATH = os.path.join("artifact", "training_distribution.json")
-
-
-def _write_training_distribution(raw_df: pd.DataFrame, schema: dict) -> None:
+def _write_training_distribution(raw_df: pd.DataFrame, schema: dict, output_path: str) -> None:
     """Persist a snapshot of the training data's feature distributions.
 
     Used later by drift monitoring to bucket live predictions and compute PSI.
     """
-    os.makedirs(os.path.dirname(TRAINING_DIST_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     target = schema.get("target_column")
     numerical_cols = [c for c in schema.get("numerical_columns", []) if c != target and c in raw_df.columns]
@@ -63,9 +60,9 @@ def _write_training_distribution(raw_df: pd.DataFrame, schema: dict) -> None:
         "numerical": numerical,
         "categorical": categorical,
     }
-    with open(TRAINING_DIST_PATH, "w") as f:
+    with open(output_path, "w") as f:
         json.dump(snapshot, f, indent=2)
-    logging.info(f"Wrote training distribution snapshot → {TRAINING_DIST_PATH}")
+    logging.info(f"Wrote training distribution snapshot -> {output_path}")
 
 
 class DataTransformation:
@@ -76,9 +73,42 @@ class DataTransformation:
             self.data_ingestion_artifact = data_ingestion_artifact
             self.data_transformation_config = data_transformation_config
             self.data_validation_artifact = data_validation_artifact
-            self._schema_config = read_yaml_file(file_path=SCHEMA_FILE_PATH)
+            self._schema_config = read_yaml_file(file_path=self.data_transformation_config.schema_file_path)
+            self.target_column = self._resolve_target_column(self.data_transformation_config.target_column)
         except Exception as e:
             raise MyException(e, sys)
+
+    @staticmethod
+    def _normalize_col_name(name: str) -> str:
+        return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+    def _resolve_target_column(self, configured_target: str) -> str:
+        configured = configured_target or self._schema_config.get("target_column", "")
+        schema_target = self._schema_config.get("target_column", "")
+        candidates = [configured, schema_target]
+
+        raw_df = pd.read_csv(self.data_ingestion_artifact.feature_store_file_path, nrows=1)
+        available = list(raw_df.columns)
+        normalized_map = {self._normalize_col_name(col): col for col in available}
+
+        for candidate in candidates:
+            if candidate and candidate in available:
+                return candidate
+            normalized = self._normalize_col_name(candidate)
+            if normalized in normalized_map:
+                resolved = normalized_map[normalized]
+                logging.warning(
+                    f"Configured target '{candidate}' not found exactly. Using matched column '{resolved}'."
+                )
+                return resolved
+
+        if available:
+            fallback = available[-1]
+            logging.warning(
+                f"Target column not found in schema/profile. Falling back to last column: {fallback}."
+            )
+            return fallback
+        raise ValueError("Unable to resolve target column: dataset has no columns.")
 
 
     def handle_duplicates_and_missing_values(self, df):
@@ -92,7 +122,7 @@ class DataTransformation:
     def drop_not_important_features(self, df):
         """Drop features that are not important based on domain knowledge or feature importance analysis."""
         logging.info("Dropping features that are not important based on domain knowledge or feature importance analysis")
-        features_to_drop = DROP_FEATURES
+        features_to_drop = self.data_transformation_config.drop_features
         features_to_drop = [col for col in features_to_drop if col in df.columns]
         df.drop(columns=features_to_drop, inplace=True)
         return df
@@ -102,7 +132,7 @@ class DataTransformation:
         """Cap outliers in numerical columns using the IQR method."""
         logging.info("Capping outliers in numerical columns")
 
-        target_col = self._schema_config['target_column']
+        target_col = self.target_column
         numerical_cols = [
             col for col in self._schema_config['numerical_columns']
             if col != target_col
@@ -126,7 +156,7 @@ class DataTransformation:
         """
         logging.info("Encoding categorical variables and performing feature selection")
         df_encoded = df.copy()
-        cat_cols_tmp = [c for c in self._schema_config['categorical_columns'] if c in df.columns]
+        cat_cols_tmp = [c for c in self._schema_config.get('categorical_columns', []) if c in df.columns]
         le = LabelEncoder()
         for c in cat_cols_tmp:
             df_encoded[c] = le.fit_transform(df_encoded[c].astype(str))
@@ -149,15 +179,15 @@ class DataTransformation:
         plt.savefig(os.path.join(PLOT_DIR, "spearman_heatmap.png"), dpi=300)
         #plt.show()
 
-        X_tmp = df_encoded.drop(columns=["Need_Maintenance"])
-        y_tmp = df_encoded["Need_Maintenance"]
+        X_tmp = df_encoded.drop(columns=[self.target_column])
+        y_tmp = df_encoded[self.target_column]
 
         mi_scores = mutual_info_classif(X_tmp, y_tmp, discrete_features="auto", random_state=42)
         mi_series = pd.Series(mi_scores, index=X_tmp.columns).sort_values(ascending=False)
 
         plt.figure(figsize=(10, 6))
         mi_series.plot(kind="bar", color="steelblue")
-        plt.title("Mutual Information Scores vs. Need_Maintenance")
+        plt.title(f"Mutual Information Scores vs. {self.target_column}")
         plt.ylabel("MI Score")
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
@@ -176,8 +206,8 @@ class DataTransformation:
     def split_features_and_target(self, df):
         """Separate features (X) and target variable (y)."""
         logging.info("Splitting features and target variable")
-        X = df.drop(columns=['Need_Maintenance'])
-        y = df['Need_Maintenance']
+        X = df.drop(columns=[self.target_column])
+        y = df[self.target_column]
         return X, y
     
     
@@ -185,7 +215,7 @@ class DataTransformation:
         """Apply custom transformations in specified sequence."""
         logging.info("Applying custom transformations in specified sequence")
 
-        nominal_features = NOMINAL_FEATURES
+        nominal_features = self.data_transformation_config.nominal_features
         nominal_features = [col for col in nominal_features if col in X.columns]
 
         numerical_features = [
@@ -193,7 +223,7 @@ class DataTransformation:
             if c != self._schema_config['target_column'] and c in X.columns
         ]
 
-        ordinal_features =ORDINAL_FEATURES
+        ordinal_features = self.data_transformation_config.ordinal_features
 
         ordinal_features = {k: v for k, v in ordinal_features.items() if k in X.columns}
         ordinal_cols = list(ordinal_features.keys())
@@ -244,7 +274,11 @@ class DataTransformation:
             logging.info("data loaded")
 
             try:
-                _write_training_distribution(df, self._schema_config)
+                _write_training_distribution(
+                    raw_df=df,
+                    schema=self._schema_config,
+                    output_path=self.data_transformation_config.training_distribution_path,
+                )
             except Exception as snap_err:
                 logging.warning(f"training distribution snapshot skipped: {snap_err}")
             # Apply transformation steps to train
@@ -286,7 +320,8 @@ class DataTransformation:
             return DataTransformationArtifact(
                 transformed_object_file_path=self.data_transformation_config.transformed_object_file_path,
                 transformed_train_file_path=self.data_transformation_config.transformed_train_file_path,
-                transformed_test_file_path=self.data_transformation_config.transformed_test_file_path
+                transformed_test_file_path=self.data_transformation_config.transformed_test_file_path,
+                profile_name=getattr(self.data_transformation_config.training_pipeline_config, "profile_name", ""),
             )
 
         except Exception as e:

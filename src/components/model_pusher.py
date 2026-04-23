@@ -11,8 +11,6 @@ from src.entity.artifact_entity import ModelPusherArtifact, ModelEvaluationArtif
 from src.entity.config_entity import ModelPusherConfig
 from src.entity.s3_estimator import Proj1Estimator
 
-MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")
-
 
 def _sha256(path: str) -> str:
     h = hashlib.sha256()
@@ -26,12 +24,13 @@ def write_model_registry(
     trained_model_path: str,
     bucket_name: str,
     s3_key: str,
+    registry_path: str,
     metrics: dict,
     params: dict | None = None,
     baselines_path: str | None = None,
 ) -> dict:
     """Write a small JSON manifest describing the freshly-pushed model."""
-    os.makedirs(os.path.dirname(MODEL_REGISTRY_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(registry_path), exist_ok=True)
 
     baselines = []
     if baselines_path and os.path.exists(baselines_path):
@@ -54,9 +53,9 @@ def write_model_registry(
         "baselines": baselines,
         "promoted": True,
     }
-    with open(MODEL_REGISTRY_PATH, "w") as f:
+    with open(registry_path, "w") as f:
         json.dump(manifest, f, indent=2)
-    logging.info(f"Wrote model registry manifest → {MODEL_REGISTRY_PATH} ({version})")
+    logging.info(f"Wrote model registry manifest -> {registry_path} ({version})")
     return manifest
 
 
@@ -89,8 +88,11 @@ class ModelPusher:
             
             logging.info("Uploading new model to S3 bucket....")
             self.proj1_estimator.save_model(from_file=self.model_evaluation_artifact.trained_model_path)
-            model_pusher_artifact = ModelPusherArtifact(bucket_name=self.model_pusher_config.bucket_name,
-                                                        s3_model_path=self.model_pusher_config.s3_model_key_path)
+            model_pusher_artifact = ModelPusherArtifact(
+                bucket_name=self.model_pusher_config.bucket_name,
+                s3_model_path=self.model_pusher_config.s3_model_key_path,
+                profile_name=self.model_pusher_config.training_pipeline_config.profile_name,
+            )
 
             try:
                 metrics = getattr(self.model_evaluation_artifact, "metrics", None) or {}
@@ -98,8 +100,12 @@ class ModelPusher:
                     trained_model_path=self.model_evaluation_artifact.trained_model_path,
                     bucket_name=self.model_pusher_config.bucket_name,
                     s3_key=self.model_pusher_config.s3_model_key_path,
+                    registry_path=self.model_pusher_config.model_registry_file_path,
                     metrics=metrics,
-                    baselines_path=os.path.join("artifact", "baselines.json"),
+                    baselines_path=os.path.join(
+                        self.model_pusher_config.training_pipeline_config.artifact_dir,
+                        "baselines.json",
+                    ),
                 )
             except Exception as reg_err:
                 logging.warning(f"model_registry write skipped: {reg_err}")

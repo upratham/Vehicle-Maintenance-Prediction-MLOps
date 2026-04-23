@@ -1,0 +1,36 @@
+profiles:
+  vehicle_maintenance:
+    dataset:
+      source_type: mongodb
+      collection: vehicle_maintenance_data
+      target_column: NEED_MAINTENANCE
+    model:
+      type: rf
+      version_prefix: vm
+    paths:
+      schema: config/schema.yaml
+      model_config: config/model.yaml
+
+  cars_hyundai:
+    dataset:
+      source_type: mongodb
+      collection: cars_hyundai
+      target_column: Anomaly Indication
+    model:
+      type: dt
+      version_prefix: hyu
+    paths:
+      schema: config/schema_cars_hyundai.yaml
+      model_config: config/model_cars_hyundai.yaml
+
+  engine_data:
+    dataset:
+      source_type: mongodb
+      collection: engine_data
+      target_column: Engine Condition
+    model:
+      type: rf_hpo
+      version_prefix: eng
+    paths:
+      schema: config/schema_engine_data.yaml
+      model_config: config/model_engine_data.yaml

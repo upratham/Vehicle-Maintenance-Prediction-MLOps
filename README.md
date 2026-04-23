@@ -32,7 +32,16 @@ cd Vehicle-Maintenance-Prediction-MLOps
 ```bash
 # Option A — venv (recommended for local dev)
 python3.10 -m venv venv
-source venv/bin/activate            # Windows: venv\Scripts\activate
+
+# Windows (PowerShell)
+.\venv\Scripts\Activate.ps1
+
+# macOS (zsh/bash)
+source venv/bin/activate
+
+# Linux (bash)
+source venv/bin/activate
+
 pip install -r requirements.txt
 
 # Option B — conda
@@ -92,7 +101,16 @@ Press `r` to restart both, `q` to quit. Pass `s` to run in staging mode: `bash .
 **Manual (if the dev scripts aren't your thing):**
 ```bash
 # Terminal 1 — backend
+
+# Windows (PowerShell)
+.\venv\Scripts\Activate.ps1
+
+# macOS (zsh/bash)
 source venv/bin/activate
+
+# Linux (bash)
+source venv/bin/activate
+
 python -m uvicorn app:app --host 0.0.0.0 --port 5000 --reload
 
 # Terminal 2 — frontend

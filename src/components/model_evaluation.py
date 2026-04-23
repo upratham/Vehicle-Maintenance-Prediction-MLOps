@@ -2,7 +2,6 @@ from src.entity.config_entity import ModelEvaluationConfig
 from src.entity.artifact_entity import ModelTrainerArtifact, DataIngestionArtifact, ModelEvaluationArtifact,DataTransformationArtifact
 from sklearn.metrics import f1_score
 from src.exception import MyException
-from src.constants import TARGET_COLUMN
 from src.logger import logging
 from src.utils.main_utils import load_object, load_numpy_array_data
 import sys
@@ -116,7 +115,14 @@ class ModelEvaluation:
                 is_model_accepted=evaluate_model_response.is_model_accepted,
                 s3_model_path=s3_model_path,
                 trained_model_path=self.model_trainer_artifact.trained_model_file_path,
-                changed_accuracy=evaluate_model_response.difference)
+                changed_accuracy=evaluate_model_response.difference,
+                metrics={
+                    "trained_model_f1_score": evaluate_model_response.trained_model_f1_score,
+                    "best_model_f1_score": evaluate_model_response.best_model_f1_score,
+                    "difference": evaluate_model_response.difference,
+                },
+                profile_name=self.model_eval_config.training_pipeline_config.profile_name,
+            )
 
             logging.info(f"Model evaluation artifact: {model_evaluation_artifact}")
             return model_evaluation_artifact

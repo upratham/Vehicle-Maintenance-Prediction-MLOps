@@ -1,0 +1,27 @@
+columns:
+  - Engine rpm: int
+  - Lub oil pressure: float
+  - Fuel pressure: float
+  - Coolant pressure: float
+  - lub oil temp: float
+  - Coolant temp: float
+  - Engine Condition: int
+
+numerical_columns:
+  - Engine rpm
+  - Lub oil pressure
+  - Fuel pressure
+  - Coolant pressure
+  - lub oil temp
+  - Coolant temp
+  - Engine Condition
+
+categorical_columns: []
+
+drop_columns: []
+
+target_column: Engine Condition
+
+date_columns: []
+
+mm_columns: []

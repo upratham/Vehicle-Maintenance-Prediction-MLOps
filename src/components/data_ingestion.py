@@ -31,7 +31,7 @@ class DataIngestion:
         """
         try:
             logging.info(f"Exporting data from mongodb")
-            my_data = Proj1Data()
+            my_data = Proj1Data(database_name=self.data_ingestion_config.database_name)
             dataframe = my_data.export_collection_as_dataframe(collection_name=
                                                                    self.data_ingestion_config.collection_name)
             logging.info(f"Shape of dataframe: {dataframe.shape}")
@@ -65,7 +65,10 @@ class DataIngestion:
                 "Exited initiate_data_ingestion method of Data_Ingestion class"
             )
 
-            data_ingestion_artifact = DataIngestionArtifact(feature_store_file_path=self.data_ingestion_config.feature_store_file_path)
+            data_ingestion_artifact = DataIngestionArtifact(
+                feature_store_file_path=self.data_ingestion_config.feature_store_file_path,
+                profile_name=getattr(self.data_ingestion_config.training_pipeline_config, "profile_name", ""),
+            )
             
             logging.info(f"Data ingestion artifact: {data_ingestion_artifact}")
             return data_ingestion_artifact

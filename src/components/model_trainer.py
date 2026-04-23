@@ -1,20 +1,19 @@
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Tuple
-import os
+
 import numpy as np
-import tensorflow as tf
-import pandas as pd
-from sklearn.linear_model import LogisticRegression
+from clearml import Logger, Task
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score
-from sklearn.metrics import roc_auc_score, f1_score, precision_score, recall_score, classification_report,accuracy_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.tree import DecisionTreeClassifier
 
-BASELINES_PATH = os.path.join("artifact", "baselines.json")
 
-
-def _train_baselines(X_train, y_train, X_test, y_test, ann_metrics: dict) -> dict:
+def _train_baselines(X_train, y_train, X_test, y_test, ann_metrics: dict, output_path: str, target_name: str) -> dict:
     """Train LR + RF (+ XGB if installed) and persist a comparison table."""
     models: list[dict] = []
 
@@ -60,9 +59,9 @@ def _train_baselines(X_train, y_train, X_test, y_test, ann_metrics: dict) -> dic
         logging.warning(f"XGB baseline skipped: {e}")
 
     models.append({
-        "name": "Keras ANN",
-        "family": "neural-net",
-        "hyperparams": {"note": "see PARAM in src/constants"},
+        "name": ann_metrics.get("name", "Primary Model"),
+        "family": ann_metrics.get("family", "custom"),
+        "hyperparams": ann_metrics.get("hyperparams", {}),
         **{k: float(v) for k, v in ann_metrics.items()},
         "winner": True,
     })
@@ -70,18 +69,13 @@ def _train_baselines(X_train, y_train, X_test, y_test, ann_metrics: dict) -> dic
     out = {
         "computed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "cv_folds": 5,
-        "target": "Need_Maintenance",
+        "target": target_name,
         "models": models,
     }
-    os.makedirs(os.path.dirname(BASELINES_PATH), exist_ok=True)
-    with open(BASELINES_PATH, "w") as f:
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w") as f:
         json.dump(out, f, indent=2)
     return out
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization, Input
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from tensorflow.keras.regularizers import l2
-from clearml import Task, Logger
 
 
 from src.exception import MyException
@@ -101,53 +95,6 @@ class ModelTrainer:
         self.data_transformation_artifact = data_transformation_artifact
         self.model_trainer_config = model_trainer_config
 
-  
-    def build_model(self, input_dim, params):
-        logging.info(f"Building ANN model with input dimension {input_dim}")
-        model = Sequential()
-        model.add(Input(shape=(input_dim,)))
-
-        for i in range(params["num_layers"]):
-            units = params[f"units_layer_{i+1}"]
-            model.add(
-                Dense(
-                    units,
-                    activation=params["activation"],
-                    kernel_regularizer=l2(params["l2_reg"])
-                )
-            )
-
-            if params["batch_norm"]:
-                model.add(BatchNormalization())
-
-            model.add(Dropout(params["dropout"]))
-
-        model.add(Dense(1, activation="sigmoid"))
-
-        if params["optimizer"] == "adam":
-            optimizer = tf.keras.optimizers.Adam(learning_rate=params["learning_rate"])
-        elif params["optimizer"] == "rmsprop":
-            optimizer = tf.keras.optimizers.RMSprop(learning_rate=params["learning_rate"])
-        else:
-            optimizer = tf.keras.optimizers.SGD(
-                learning_rate=params["learning_rate"],
-                momentum=0.9
-            )
-
-        model.compile(
-            optimizer=optimizer,
-            loss="binary_crossentropy",
-            metrics=[
-                tf.keras.metrics.BinaryAccuracy(name="accuracy"),
-                tf.keras.metrics.AUC(name="auc"),
-                tf.keras.metrics.Precision(name="precision"),
-                tf.keras.metrics.Recall(name="recall"),
-            ],
-        )
-        return model
-
-
-
     def get_model_object_and_report(self, train: np.array, test: np.array) -> Tuple[object, object]:
         """
         Method Name :   get_model_object_and_report
@@ -157,53 +104,129 @@ class ModelTrainer:
         On Failure  :   Write an exception log and then raise an exception
         """
         try:
+            profile_name = self.model_trainer_config.training_pipeline_config.profile_name
+            model_type = (self.model_trainer_config.model_type or "rf").strip().lower()
+
             task = Task.init(
             project_name="605-Vehicle_Maintainance-project",
-            task_name="ANN Binary Classification Base",
+            task_name=f"{profile_name} {model_type.upper()} Training",
             task_type=Task.TaskTypes.training,
             reuse_last_task_id=False,)
             logger = Logger.current_logger()
-            logging.info("ClearlyML task initialized for model training.")
+            logging.info(f"ClearML task initialized for model training for profile={profile_name}, model_type={model_type}.")
+            task.connect({"profile_name": profile_name, "model_type": model_type})
     
-            logging.info("Training ANN with specified parameters")
+            logging.info("Training model with specified parameters")
 
             # Splitting the train and test data into features and target variables
             X_train, y_train, X_test, y_test = train[:, :-1], train[:, -1], test[:, :-1], test[:, -1]
             logging.info("train-test split done.")
-            params=self.model_trainer_config.params
-            model = self.build_model(input_dim=X_train.shape[1], params=params)
-            early_stop = EarlyStopping(
-                                        monitor="val_auc",
-                                        mode="max",
-                                        patience=8,
-                                        restore_best_weights=True,
-                                        verbose=1)
-            
-            reduce_lr = ReduceLROnPlateau(
-                                            monitor="val_auc",
-                                            mode="max",
-                                            factor=0.5,
-                                            patience=4,
-                                            min_lr=1e-6,
-                                            verbose=1
-                                        )
-            # Fit the model
-            logging.info("Model training going on...")
-            history = model.fit(             X_train,
-                                            y_train,
-                                            validation_split=0.2,
-                                            epochs=params["epochs"],
-                                            batch_size=params["batch_size"],
-                                            callbacks=[early_stop, reduce_lr],
-                                            verbose=1,
-                                        )
-                                                        
-      
+            params = self.model_trainer_config.params
+
+            if model_type in {"rf", "random_forest"}:
+                model = RandomForestClassifier(
+                    n_estimators=int(params.get("rf_n_estimators", 300)),
+                    max_depth=params.get("rf_max_depth", None),
+                    min_samples_leaf=int(params.get("rf_min_samples_leaf", 1)),
+                    random_state=int(params.get("random_state", 42)),
+                    n_jobs=-1,
+                )
+                model_family = "ensemble-bagging"
+                model_hparams = {
+                    "n_estimators": model.n_estimators,
+                    "max_depth": model.max_depth,
+                    "min_samples_leaf": model.min_samples_leaf,
+                    "random_state": model.random_state,
+                }
+                model.fit(X_train, y_train)
+            elif model_type in {"dt", "decision_tree"}:
+                model = DecisionTreeClassifier(
+                    max_depth=params.get("dt_max_depth", None),
+                    min_samples_leaf=int(params.get("dt_min_samples_leaf", 1)),
+                    random_state=int(params.get("random_state", 42)),
+                )
+                model_family = "tree"
+                model_hparams = {
+                    "max_depth": model.max_depth,
+                    "min_samples_leaf": model.min_samples_leaf,
+                    "random_state": model.random_state,
+                }
+                model.fit(X_train, y_train)
+            elif model_type in {"rf_hpo", "random_forest_hpo", "rf-with-hpo"}:
+                try:
+                    import optuna
+
+                    logging.info("Starting Optuna HPO for Random Forest")
+                    n_trials = int(params.get("hpo_trials", 20))
+                    cv_folds = int(params.get("hpo_cv_folds", 3))
+
+                    def objective(trial):
+                        estimator = RandomForestClassifier(
+                            n_estimators=trial.suggest_int("n_estimators", 100, 500),
+                            max_depth=trial.suggest_int("max_depth", 3, 25),
+                            min_samples_leaf=trial.suggest_int("min_samples_leaf", 1, 10),
+                            min_samples_split=trial.suggest_int("min_samples_split", 2, 20),
+                            random_state=int(params.get("random_state", 42)),
+                            n_jobs=-1,
+                        )
+                        scores = cross_val_score(
+                            estimator,
+                            X_train,
+                            y_train,
+                            cv=StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42),
+                            scoring="f1",
+                            n_jobs=-1,
+                        )
+                        return float(scores.mean())
+
+                    study = optuna.create_study(direction="maximize")
+                    study.optimize(objective, n_trials=n_trials)
+
+                    best = study.best_params
+                    logger.report_scalar("hpo/best_cv_f1", "rf_hpo", float(study.best_value), 0)
+                    task.connect({"hpo_best_params": best})
+
+                    model = RandomForestClassifier(
+                        n_estimators=int(best["n_estimators"]),
+                        max_depth=int(best["max_depth"]),
+                        min_samples_leaf=int(best["min_samples_leaf"]),
+                        min_samples_split=int(best["min_samples_split"]),
+                        random_state=int(params.get("random_state", 42)),
+                        n_jobs=-1,
+                    )
+                    model_family = "ensemble-bagging-hpo"
+                    model_hparams = best
+                    model.fit(X_train, y_train)
+                except Exception as hpo_err:
+                    logging.warning(f"RF HPO failed, falling back to plain RF: {hpo_err}")
+                    model = RandomForestClassifier(
+                        n_estimators=int(params.get("rf_n_estimators", 300)),
+                        max_depth=params.get("rf_max_depth", None),
+                        min_samples_leaf=int(params.get("rf_min_samples_leaf", 1)),
+                        random_state=int(params.get("random_state", 42)),
+                        n_jobs=-1,
+                    )
+                    model_family = "ensemble-bagging"
+                    model_hparams = {
+                        "n_estimators": model.n_estimators,
+                        "max_depth": model.max_depth,
+                        "min_samples_leaf": model.min_samples_leaf,
+                        "random_state": model.random_state,
+                    }
+                    model.fit(X_train, y_train)
+            else:
+                raise ValueError(
+                    f"Unsupported model_type '{model_type}'. Use one of: rf, dt, rf_hpo."
+                )
+
             logging.info("Model training done.")
 
             # Predictions and evaluation metrics
-            y_pred_proba = model.predict(X_test).flatten() 
-            y_pred = (y_pred_proba >= 0.5).astype(int)  
+            y_pred = model.predict(X_test)
+            if hasattr(model, "predict_proba"):
+                y_pred_proba = model.predict_proba(X_test)[:, 1]
+            else:
+                y_pred_proba = y_pred
             accuracy = accuracy_score(y_test, y_pred)
             f1 = f1_score(y_test, y_pred)
             precision = precision_score(y_test, y_pred)
@@ -215,6 +238,7 @@ class ModelTrainer:
                 logger.report_scalar("test/f1",        "final", f1,        0)
                 logger.report_scalar("test/precision", "final", precision, 0)
                 logger.report_scalar("test/recall",    "final", recall,    0)
+                logger.report_scalar("test/roc_auc",   "final", float(roc_auc_score(y_test, y_pred_proba)), 0)
                 task.upload_artifact("trained_model", artifact_object=model)
                 task.close()
             except Exception as log_err:
@@ -227,10 +251,15 @@ class ModelTrainer:
                 _train_baselines(
                     X_train, y_train, X_test, y_test,
                     ann_metrics={
+                        "name": f"Primary {model_type.upper()}",
+                        "family": model_family,
+                        "hyperparams": model_hparams,
                         "f1": f1, "precision": precision, "recall": recall,
                         "accuracy": accuracy,
                         "roc_auc": float(roc_auc_score(y_test, y_pred_proba)),
                     },
+                    output_path=self.model_trainer_config.baselines_file_path,
+                    target_name=self.model_trainer_config.target_column,
                 )
             except Exception as bl_err:
                 logging.warning(f"baselines write skipped: {bl_err}")
@@ -272,6 +301,7 @@ class ModelTrainer:
             model_trainer_artifact = ModelTrainerArtifact(
                 trained_model_file_path=self.model_trainer_config.trained_model_file_path,
                 metric_artifact=metric_artifact,
+                profile_name=self.model_trainer_config.training_pipeline_config.profile_name,
             )
             logging.info(f"Model trainer artifact: {model_trainer_artifact}")
             return model_trainer_artifact

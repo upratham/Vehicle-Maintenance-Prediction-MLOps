@@ -12,12 +12,13 @@ class Proj1Data:
     A class to export MongoDB records as a pandas DataFrame.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, database_name: Optional[str] = None) -> None:
         """
         Initializes the MongoDB client connection.
         """
         try:
-            self.mongo_client = MongoDBClient(database_name=DATABASE_NAME)
+            resolved_db_name = database_name or DATABASE_NAME or "605_Project_Data"
+            self.mongo_client = MongoDBClient(database_name=resolved_db_name)
         except Exception as e:
             raise MyException(e, sys)
 

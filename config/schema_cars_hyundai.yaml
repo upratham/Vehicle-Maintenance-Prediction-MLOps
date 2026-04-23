@@ -1,0 +1,23 @@
+columns:
+  - Engine Temperature (°C): float
+  - Brake Pad Thickness (mm): float
+  - Tire Pressure (PSI): float
+  - Maintenance Type: category
+  - Anomaly Indication: int
+
+numerical_columns:
+  - Engine Temperature (°C)
+  - Brake Pad Thickness (mm)
+  - Tire Pressure (PSI)
+  - Anomaly Indication
+
+categorical_columns:
+  - Maintenance Type
+
+drop_columns: []
+
+target_column: Anomaly Indication
+
+date_columns: []
+
+mm_columns: []
