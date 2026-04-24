@@ -166,6 +166,9 @@ class BaseDataTransformation:
             logging.info("Skipping stratified split because target distribution is not compatible.")
         return train_test_split(X, y, test_size=0.2, random_state=42, stratify=stratify)
 
+    def encode_target(self, y_train: pd.Series, y_test: pd.Series) -> tuple[pd.Series, pd.Series]:
+        return y_train, y_test
+
     def post_split_train_processing(
         self, X_train: pd.DataFrame, X_test: pd.DataFrame
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -247,6 +250,7 @@ class BaseDataTransformation:
             df = self.prepare_dataframe(df)
             X, y = self.split_features_and_target(df)
             X_train, X_test, y_train, y_test = self.split_train_test(X, y)
+            y_train, y_test = self.encode_target(y_train=y_train, y_test=y_test)
             X_train, X_test = self.post_split_train_processing(X_train=X_train, X_test=X_test)
 
             preprocessor = self.build_preprocessor(X_train)
@@ -408,6 +412,37 @@ class VehicleMaintenanceDataTransformation(BaseDataTransformation):
 class HyundaiCarsDataTransformation(BaseDataTransformation):
     """Minimal schema-driven preprocessing for the Hyundai dataset."""
 
+    def encode_target(self, y_train: pd.Series, y_test: pd.Series) -> tuple[pd.Series, pd.Series]:
+        logging.info("Encoding Hyundai maintenance-type target labels")
+        label_encoder = LabelEncoder()
+        y_train_encoded = pd.Series(
+            label_encoder.fit_transform(y_train.astype(str)),
+            index=y_train.index,
+            name=y_train.name,
+        )
+        y_test_encoded = pd.Series(
+            label_encoder.transform(y_test.astype(str)),
+            index=y_test.index,
+            name=y_test.name,
+        )
+
+        classes_path = os.path.join(
+            self.data_transformation_config.training_pipeline_config.artifact_dir,
+            "target_classes.json",
+        )
+        os.makedirs(os.path.dirname(classes_path), exist_ok=True)
+        with open(classes_path, "w", encoding="utf-8") as file_obj:
+            json.dump(
+                {
+                    "target_column": self.target_column,
+                    "classes": label_encoder.classes_.tolist(),
+                },
+                file_obj,
+                indent=2,
+            )
+        logging.info(f"Saved Hyundai target classes -> {classes_path}")
+        return y_train_encoded, y_test_encoded
+
     def build_preprocessor(self, X_train: pd.DataFrame) -> ColumnTransformer:
         logging.info("Building Hyundai cars preprocessor")
         categorical_features = self._get_schema_categorical_columns(X_train)
@@ -459,6 +494,7 @@ class DataTransformation:
     TARGET_CLASS_MAP = {
         "needmaintenance": VehicleMaintenanceDataTransformation,
         "anomalyindication": HyundaiCarsDataTransformation,
+        "maintenancetype": HyundaiCarsDataTransformation,
         "enginecondition": EngineDataTransformation,
     }
 

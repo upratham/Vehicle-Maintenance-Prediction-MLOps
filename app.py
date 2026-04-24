@@ -20,7 +20,13 @@ from uvicorn import run as app_run
 from typing import Optional
 
 from src.constants import APP_HOST, APP_PORT
-from src.pipline.prediction_pipeline import VehicleData, VehicleDataClassifier
+from src.pipline.prediction_pipeline import (
+    VehicleData,
+    VehicleDataClassifier,
+    HyundaiCarsData,
+    EngineData,
+    MultiModelOrchestrator,
+)
 from src.pipline.training_pipeline import TrainPipeline
 from src.insights import pick_service, feature_impacts
 from src.drift import log_prediction, compute_drift
@@ -270,6 +276,54 @@ async def predict_json(payload: PredictPayload):
         return JSONResponse(response)
     except Exception as e:
         logging.error(f"/predict failed: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Hyundai cars anomaly-detection endpoint
+# ──────────────────────────────────────────────────────────────────────────────
+
+class HyundaiCarsPredictPayload(BaseModel):
+    engine_temperature: float   # Engine Temperature (°C)
+    brake_pad_thickness: float  # Brake Pad Thickness (mm)
+    tire_pressure: float        # Tire Pressure (PSI)
+    maintenance_type: str       # e.g. "Preventive", "Corrective", "Emergency"
+
+
+@app.post("/predict/hyundai")
+async def predict_hyundai(payload: HyundaiCarsPredictPayload):
+    """Anomaly-detection prediction for Hyundai cars dataset."""
+    try:
+        data = HyundaiCarsData(**payload.model_dump())
+        result = MultiModelOrchestrator().predict("cars_hyundai", data.get_dataframe())
+        return JSONResponse(result)
+    except Exception as e:
+        logging.error(f"/predict/hyundai failed: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Engine condition endpoint
+# ──────────────────────────────────────────────────────────────────────────────
+
+class EngineDataPredictPayload(BaseModel):
+    engine_rpm: float        # Engine rpm
+    lub_oil_pressure: float  # Lub oil pressure
+    fuel_pressure: float     # Fuel pressure
+    coolant_pressure: float  # Coolant pressure
+    lub_oil_temp: float      # lub oil temp
+    coolant_temp: float      # Coolant temp
+
+
+@app.post("/predict/engine")
+async def predict_engine(payload: EngineDataPredictPayload):
+    """Engine condition prediction for engine_data dataset."""
+    try:
+        data = EngineData(**payload.model_dump())
+        result = MultiModelOrchestrator().predict("engine_data", data.get_dataframe())
+        return JSONResponse(result)
+    except Exception as e:
+        logging.error(f"/predict/engine failed: {e}", exc_info=True)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

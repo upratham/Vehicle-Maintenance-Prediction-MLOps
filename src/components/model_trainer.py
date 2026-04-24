@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import sys
 from abc import ABC, abstractmethod
@@ -12,7 +13,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
 
 from src.exception import MyException
 from src.logger import logging
@@ -25,21 +26,59 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 CLEARML_PROJECT = "605-Vehicle_Maintainance-project"
 
 
+def _metric_average(y_true: np.ndarray) -> str:
+    return "binary" if len(np.unique(np.asarray(y_true))) <= 2 else "weighted"
+
+
+def _prediction_scores(model, X: np.ndarray):
+    if hasattr(model, "predict_proba"):
+        return model.predict_proba(X)
+    if hasattr(model, "decision_function"):
+        return model.decision_function(X)
+    return None
+
+
+def _safe_roc_auc(y_true: np.ndarray, scores) -> float | None:
+    try:
+        if scores is None:
+            return None
+
+        y_true = np.asarray(y_true)
+        n_classes = len(np.unique(y_true))
+        score_arr = np.asarray(scores)
+
+        if n_classes <= 2:
+            if score_arr.ndim == 2:
+                if score_arr.shape[1] == 1:
+                    score_arr = score_arr[:, 0]
+                else:
+                    score_arr = score_arr[:, 1]
+            return float(roc_auc_score(y_true, score_arr))
+
+        if score_arr.ndim != 2:
+            return None
+        return float(roc_auc_score(y_true, score_arr, multi_class="ovr", average="weighted"))
+    except Exception as e:
+        logging.warning(f"ROC-AUC computation skipped: {e}")
+        return None
+
+
 def _train_baselines(X_train, y_train, X_test, y_test, primary_metrics: dict, output_path: str, target_name: str) -> dict:
     models: list[dict] = []
 
     def _eval(name, clf, family, hyperparams):
         clf.fit(X_train, y_train)
         pred = clf.predict(X_test)
-        proba = clf.predict_proba(X_test)[:, 1] if hasattr(clf, "predict_proba") else pred
+        average = _metric_average(y_test)
+        roc_auc = _safe_roc_auc(y_test, _prediction_scores(clf, X_test))
         models.append({
             "name": name,
             "family": family,
             "hyperparams": hyperparams,
-            "f1": float(f1_score(y_test, pred)),
-            "precision": float(precision_score(y_test, pred)),
-            "recall": float(recall_score(y_test, pred)),
-            "roc_auc": float(roc_auc_score(y_test, proba)),
+            "f1": float(f1_score(y_test, pred, average=average, zero_division=0)),
+            "precision": float(precision_score(y_test, pred, average=average, zero_division=0)),
+            "recall": float(recall_score(y_test, pred, average=average, zero_division=0)),
+            "roc_auc": roc_auc,
             "accuracy": float(accuracy_score(y_test, pred)),
         })
 
@@ -58,6 +97,14 @@ def _train_baselines(X_train, y_train, X_test, y_test, primary_metrics: dict, ou
               {"n_estimators": 300, "max_depth": 14, "min_samples_leaf": 3, "random_state": 42})
     except Exception as e:
         logging.warning(f"RF baseline failed: {e}")
+
+    try:
+        _eval("SVM",
+              SVC(C=1.0, kernel="rbf", gamma="scale", probability=True, random_state=42),
+              "kernel-svm",
+              {"C": 1.0, "kernel": "rbf", "gamma": "scale", "probability": True, "random_state": 42})
+    except Exception as e:
+        logging.warning(f"SVM baseline failed: {e}")
 
     try:
         from xgboost import XGBClassifier
@@ -109,26 +156,28 @@ class BaseModelTrainer(ABC):
         logging.info(f"ClearML task initialised for profile={profile}.")
         return task, logger
 
-    def _log_trial(self, logger: Logger, trial_number: int, cv_f1: float) -> None:
+    def _log_trial(self, logger: Logger, trial_number: int, cv_f1: float, series: str = "trial") -> None:
         """Log each Optuna trial F1 to ClearML so HPO progress is visible."""
-        logger.report_scalar("hpo/cv_f1", "trial", cv_f1, trial_number)
+        logger.report_scalar("hpo/cv_f1", series, cv_f1, trial_number)
 
     def _log_final_metrics(self, logger: Logger, metrics: dict) -> None:
         logger.report_scalar("test/accuracy",  "final", metrics["accuracy"],  0)
         logger.report_scalar("test/f1",        "final", metrics["f1"],        0)
         logger.report_scalar("test/precision", "final", metrics["precision"], 0)
         logger.report_scalar("test/recall",    "final", metrics["recall"],    0)
-        logger.report_scalar("test/roc_auc",   "final", metrics["roc_auc"],   0)
+        if metrics.get("roc_auc") is not None and not math.isnan(metrics["roc_auc"]):
+            logger.report_scalar("test/roc_auc", "final", metrics["roc_auc"], 0)
 
     def _evaluate(self, model, X_test: np.ndarray, y_test: np.ndarray) -> dict:
         y_pred = model.predict(X_test)
-        y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else y_pred
+        average = _metric_average(y_test)
+        roc_auc = _safe_roc_auc(y_test, _prediction_scores(model, X_test))
         return {
-            "f1":        float(f1_score(y_test, y_pred)),
-            "precision": float(precision_score(y_test, y_pred)),
-            "recall":    float(recall_score(y_test, y_pred)),
+            "f1":        float(f1_score(y_test, y_pred, average=average, zero_division=0)),
+            "precision": float(precision_score(y_test, y_pred, average=average, zero_division=0)),
+            "recall":    float(recall_score(y_test, y_pred, average=average, zero_division=0)),
             "accuracy":  float(accuracy_score(y_test, y_pred)),
-            "roc_auc":   float(roc_auc_score(y_test, y_proba)),
+            "roc_auc":   roc_auc,
         }
 
     @abstractmethod
@@ -283,8 +332,8 @@ class VehicleMaintenanceModelTrainer(BaseModelTrainer):
 
 class HyundaiCarsModelTrainer(BaseModelTrainer):
     """
-    Decision-Tree HPO for the Hyundai anomaly-detection dataset.
-    Uses a broader depth range since the dataset is smaller.
+    Compare Random Forest and SVM via Optuna HPO for the Hyundai maintenance-type dataset.
+    The winner is selected by weighted multiclass F1.
     """
 
     PROFILE_NAME = "cars_hyundai"
@@ -299,43 +348,98 @@ class HyundaiCarsModelTrainer(BaseModelTrainer):
         n_trials  = int(params.get("hpo_trials",   20))
         cv_folds  = int(params.get("hpo_cv_folds",  3))
         rand_seed = int(params.get("random_state", 42))
+        trials_per_model = max(5, int(np.ceil(n_trials / 2)))
+        cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=rand_seed)
+        scoring = "f1_weighted"
 
-        def objective(trial: optuna.Trial) -> float:
-            max_feat_choice = trial.suggest_categorical("max_features", ["sqrt", "log2", "all"])
-            clf = DecisionTreeClassifier(
-                max_depth         = trial.suggest_int("max_depth",           3,  25),
-                min_samples_leaf  = trial.suggest_int("min_samples_leaf",    1,  20),
-                min_samples_split = trial.suggest_int("min_samples_split",   2,  30),
-                criterion         = trial.suggest_categorical("criterion",   ["gini", "entropy"]),
-                max_features      = None if max_feat_choice == "all" else max_feat_choice,
-                random_state=rand_seed,
-            )
-            scores = cross_val_score(
-                clf, X_train, y_train,
-                cv=StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=rand_seed),
-                scoring="f1", n_jobs=-1,
-            )
-            cv_f1 = float(scores.mean())
-            self._log_trial(logger, trial.number, cv_f1)
-            return cv_f1
+        def optimize_random_forest() -> dict:
+            def objective(trial: optuna.Trial) -> float:
+                clf = RandomForestClassifier(
+                    n_estimators=trial.suggest_int("n_estimators", 100, 500),
+                    max_depth=trial.suggest_int("max_depth", 3, 20),
+                    min_samples_leaf=trial.suggest_int("min_samples_leaf", 1, 8),
+                    min_samples_split=trial.suggest_int("min_samples_split", 2, 12),
+                    max_features=trial.suggest_categorical("max_features", ["sqrt", "log2"]),
+                    random_state=rand_seed,
+                    n_jobs=-1,
+                )
+                scores = cross_val_score(clf, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
+                cv_f1 = float(scores.mean())
+                self._log_trial(logger, trial.number, cv_f1, "Random Forest")
+                return cv_f1
 
-        study = optuna.create_study(direction="maximize", study_name="hyundai_dt_hpo")
-        study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+            study = optuna.create_study(direction="maximize", study_name="hyundai_rf_hpo")
+            study.optimize(objective, n_trials=trials_per_model, show_progress_bar=False)
+            best = study.best_params
+            logger.report_scalar("hpo/model_best_cv_f1", "Random Forest", study.best_value, 0)
+            return {
+                "name": "Random Forest",
+                "score": float(study.best_value),
+                "family": "ensemble-bagging-hpo",
+                "params": best,
+                "model": RandomForestClassifier(
+                    n_estimators=int(best["n_estimators"]),
+                    max_depth=int(best["max_depth"]),
+                    min_samples_leaf=int(best["min_samples_leaf"]),
+                    min_samples_split=int(best["min_samples_split"]),
+                    max_features=best["max_features"],
+                    random_state=rand_seed,
+                    n_jobs=-1,
+                ),
+            }
 
-        best = study.best_params
-        logging.info(f"[{self.PROFILE_NAME}] Best HPO params (cv_f1={study.best_value:.4f}): {best}")
-        logger.report_scalar("hpo/best_cv_f1", "hyundai_dt_hpo", study.best_value, 0)
+        def optimize_svm() -> dict:
+            def objective(trial: optuna.Trial) -> float:
+                kernel = trial.suggest_categorical("kernel", ["linear", "rbf", "poly"])
+                gamma = trial.suggest_categorical("gamma", ["scale", "auto"])
+                degree = trial.suggest_int("degree", 2, 4) if kernel == "poly" else 3
+                clf = SVC(
+                    C=trial.suggest_float("C", 0.1, 50.0, log=True),
+                    kernel=kernel,
+                    gamma=gamma,
+                    degree=degree,
+                    probability=True,
+                    random_state=rand_seed,
+                )
+                scores = cross_val_score(clf, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
+                cv_f1 = float(scores.mean())
+                self._log_trial(logger, trial.number, cv_f1, "SVM")
+                return cv_f1
 
-        max_feat_val = None if best["max_features"] == "all" else best["max_features"]
-        model = DecisionTreeClassifier(
-            max_depth         = int(best["max_depth"]),
-            min_samples_leaf  = int(best["min_samples_leaf"]),
-            min_samples_split = int(best["min_samples_split"]),
-            criterion         = best["criterion"],
-            max_features      = max_feat_val,
-            random_state=rand_seed,
+            study = optuna.create_study(direction="maximize", study_name="hyundai_svm_hpo")
+            study.optimize(objective, n_trials=trials_per_model, show_progress_bar=False)
+            best = study.best_params
+            logger.report_scalar("hpo/model_best_cv_f1", "SVM", study.best_value, 0)
+            return {
+                "name": "SVM",
+                "score": float(study.best_value),
+                "family": "kernel-svm-hpo",
+                "params": best,
+                "model": SVC(
+                    C=float(best["C"]),
+                    kernel=best["kernel"],
+                    gamma=best["gamma"],
+                    degree=int(best.get("degree", 3)),
+                    probability=True,
+                    random_state=rand_seed,
+                ),
+            }
+
+        rf_result = optimize_random_forest()
+        svm_result = optimize_svm()
+        best_result = max([rf_result, svm_result], key=lambda item: item["score"])
+
+        logger.report_scalar("hpo/best_cv_f1", best_result["name"], best_result["score"], 0)
+        logging.info(
+            f"[{self.PROFILE_NAME}] Selected {best_result['name']} "
+            f"with weighted CV F1={best_result['score']:.4f} and params={best_result['params']}"
         )
-        return model, {**best, "max_features": max_feat_val}, "tree-hpo"
+        selected_params = {
+            "selected_model": best_result["name"],
+            "trials_per_model": trials_per_model,
+            **best_result["params"],
+        }
+        return best_result["model"], selected_params, best_result["family"]
 
 
 class EngineDataModelTrainer(BaseModelTrainer):

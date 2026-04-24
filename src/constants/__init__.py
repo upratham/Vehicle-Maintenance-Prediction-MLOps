@@ -75,6 +75,8 @@ MODEL_TRAINER_EXPECTED_SCORE: float = 0.6
 MODEL_TRAINER_MODEL_CONFIG_FILE_PATH: str = os.path.join("config", "model.yaml")
 PARAM = {
         "random_state": 42,
+        "hpo_trials": 20,
+        "hpo_cv_folds": 3,
         "epochs": 10,
         "batch_size": 64,
         "learning_rate": 0.001,

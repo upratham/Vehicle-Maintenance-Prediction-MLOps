@@ -11,12 +11,11 @@ numerical_columns:
   - Tire Pressure (PSI)
   - Anomaly Indication
 
-categorical_columns:
-  - Maintenance Type
+categorical_columns: []
 
 drop_columns: []
 
-target_column: Anomaly Indication
+target_column: Maintenance Type
 
 date_columns: []
 

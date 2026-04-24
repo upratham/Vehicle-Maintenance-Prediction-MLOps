@@ -15,9 +15,9 @@ profiles:
     dataset:
       source_type: mongodb
       collection: cars_hyundai
-      target_column: Anomaly Indication
+      target_column: Maintenance Type
     model:
-      type: dt_hpo
+      type: svm_rf_hpo
       version_prefix: hyu
     paths:
       schema: config/schema_cars_hyundai.yaml

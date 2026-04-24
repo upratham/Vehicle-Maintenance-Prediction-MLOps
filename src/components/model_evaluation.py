@@ -5,6 +5,7 @@ from src.exception import MyException
 from src.logger import logging
 from src.utils.main_utils import load_object, load_numpy_array_data
 import sys
+import numpy as np
 import pandas as pd
 from typing import Optional
 from src.entity.s3_estimator import Proj1Estimator
@@ -81,9 +82,17 @@ class ModelEvaluation:
             if best_model is not None:
                 logging.info(f"Computing F1_Score for production model..")
                 try:
-                    y_pred_proba = best_model.predict(x).flatten()
-                    y_hat_best_model = (y_pred_proba >= 0.5).astype(int)
-                    best_model_f1_score = f1_score(y, y_hat_best_model)
+                    raw_predictions = np.asarray(best_model.predict(x))
+                    if raw_predictions.ndim == 2:
+                        if raw_predictions.shape[1] == 1:
+                            y_hat_best_model = (raw_predictions.ravel() >= 0.5).astype(int)
+                        else:
+                            y_hat_best_model = np.argmax(raw_predictions, axis=1)
+                    else:
+                        y_hat_best_model = raw_predictions.ravel()
+
+                    average = "binary" if len(np.unique(y)) <= 2 else "weighted"
+                    best_model_f1_score = f1_score(y, y_hat_best_model, average=average)
                     logging.info(
                         f"F1_Score-Production Model: {best_model_f1_score}, "
                         f"F1_Score-New Trained Model: {trained_model_f1_score}"
