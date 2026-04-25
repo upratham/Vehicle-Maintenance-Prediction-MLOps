@@ -165,11 +165,12 @@ class VehicleMaintenanceData:
 class HyundaiCarsData:
     """
     Input features for the cars_hyundai anomaly-detection model.
+    Target: Anomaly Indication (binary). Features fed to the preprocessor:
 
       engine_temperature  -> "Engine Temperature (°C)"  float
       brake_pad_thickness -> "Brake Pad Thickness (mm)" float
       tire_pressure       -> "Tire Pressure (PSI)"      float
-      maintenance_type    -> "Maintenance Type"          str   (e.g. "Preventive", "Corrective")
+      maintenance_type    -> "Maintenance Type"          str   (Repair | Routine Maintenance | Component Replacement)
     """
 
     def __init__(

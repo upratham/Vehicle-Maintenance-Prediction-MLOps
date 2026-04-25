@@ -9,13 +9,13 @@ numerical_columns:
   - Engine Temperature (°C)
   - Brake Pad Thickness (mm)
   - Tire Pressure (PSI)
-  - Anomaly Indication
 
-categorical_columns: []
+categorical_columns:
+  - Maintenance Type
 
 drop_columns: []
 
-target_column: Maintenance Type
+target_column: Anomaly Indication
 
 date_columns: []
 

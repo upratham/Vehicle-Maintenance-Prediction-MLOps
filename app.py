@@ -1,25 +1,23 @@
 import asyncio
-import io
 import json
 import logging as _py_logging
 import os
 import queue
 import threading
-from contextlib import redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from starlette.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from starlette.responses import StreamingResponse
 from uvicorn import run as app_run
 
 from typing import Optional
 
-from src.constants import APP_HOST, APP_PORT
+from src.constants import APP_HOST
 from src.pipline.prediction_pipeline import (
     VehicleData,
     VehicleDataClassifier,
@@ -287,7 +285,7 @@ class HyundaiCarsPredictPayload(BaseModel):
     engine_temperature: float   # Engine Temperature (°C)
     brake_pad_thickness: float  # Brake Pad Thickness (mm)
     tire_pressure: float        # Tire Pressure (PSI)
-    maintenance_type: str       # e.g. "Preventive", "Corrective", "Emergency"
+    maintenance_type: str       # Repair | Routine Maintenance | Component Replacement
 
 
 @app.post("/predict/hyundai")

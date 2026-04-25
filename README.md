@@ -96,6 +96,7 @@ bash .dev/fe.sh           # Vite on http://localhost:3000
 |---|---|
 | http://localhost:3000 | Predictor (VIN decode + SHAP explanation) |
 | http://localhost:3000/ops | Ops dashboard (registry, baselines, drift, retrain) |
+| http://localhost:5000 | Legacy HTML form (tabbed — Vehicle Maintenance, Hyundai Anomaly, Engine Condition) |
 | http://localhost:5000/docs | FastAPI Swagger UI |
 
 ---
@@ -225,8 +226,11 @@ MongoDB Atlas  ──────────┤ (fallback if CSV missing)
 
 | Route | Method | Description | Auth |
 |---|---|---|---|
-| `/` | GET | Legacy HTML form | — |
-| `/predict` | POST | JSON prediction + SHAP explanations | — |
+| `/` | GET | HTML form (tabbed: all 3 models) | — |
+| `/` | POST | Server-side prediction for Vehicle Maintenance (form submit) | — |
+| `/predict` | POST | JSON prediction + SHAP explanations (vehicle_maintenance) | — |
+| `/predict/hyundai` | POST | Anomaly-detection prediction for Hyundai cars dataset | — |
+| `/predict/engine` | POST | Engine condition prediction for engine_data dataset | — |
 | `/model_info` | GET | Version, hash, metrics, baselines for all profiles | — |
 | `/drift?window=7d` | GET | Per-feature PSI vs. training distribution | — |
 | `/train` | POST | SSE-streamed training logs; returns old-vs-new metric diff | `X-Ops-Token` |
