@@ -1,7 +1,8 @@
 """Rule-based cost estimation and feature-impact explanation.
 
 Kept deliberately simple and deterministic so the demo is reliable:
-  - Cost/hours are looked up from data/repair_costs.csv (industry ballpark ranges).
+  - Cost/hours are looked up from the MongoDB `repair_costs` collection.
+  - Falls back to hardcoded data if MongoDB is unreachable.
   - Feature impact is a heuristic "contribution score" computed from the user's
     inputs; it mirrors what a SHAP plot would show but has no external deps and
     can't fail at demo time.
@@ -9,12 +10,29 @@ Kept deliberately simple and deterministic so the demo is reliable:
 
 from __future__ import annotations
 
-import csv
-import os
 from dataclasses import dataclass
 from typing import Any
 
-_COSTS_CSV = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "repair_costs.csv")
+from src.logger import logging
+
+_REPAIR_COSTS_COLLECTION = "repair_costs"
+
+_HARDCODED_COSTS = [
+    {"trigger": "brake_worn",          "service": "Brake pad replacement",           "cost_low": 180,  "cost_high": 450,  "hours_low": 1.0, "hours_high": 2.5, "notes": "Front or rear pads; includes labor"},
+    {"trigger": "brake_worn_severe",   "service": "Brake rotor + pad service",       "cost_low": 350,  "cost_high": 800,  "hours_low": 2.0, "hours_high": 4.0, "notes": "When rotors also need resurfacing or replacement"},
+    {"trigger": "battery_weak",        "service": "Battery replacement",             "cost_low": 120,  "cost_high": 320,  "hours_low": 0.3, "hours_high": 1.0, "notes": "Standard 12V; premium/AGM higher"},
+    {"trigger": "tire_worn",           "service": "Tire replacement (set of 4)",     "cost_low": 500,  "cost_high": 1400, "hours_low": 1.0, "hours_high": 2.0, "notes": "Includes mounting and balancing"},
+    {"trigger": "tire_mild",           "service": "Tire rotation & alignment",       "cost_low": 80,   "cost_high": 180,  "hours_low": 0.5, "hours_high": 1.5, "notes": "Preventive maintenance"},
+    {"trigger": "high_mileage_routine","service": "Oil & filter change",             "cost_low": 40,   "cost_high": 110,  "hours_low": 0.5, "hours_high": 1.0, "notes": "Conventional to full synthetic"},
+    {"trigger": "high_mileage_trans",  "service": "Transmission fluid service",      "cost_low": 180,  "cost_high": 400,  "hours_low": 1.0, "hours_high": 2.0, "notes": "Manual or automatic"},
+    {"trigger": "engine_age",          "service": "Spark plug replacement",          "cost_low": 120,  "cost_high": 380,  "hours_low": 1.0, "hours_high": 2.5, "notes": "Set of 4-8 depending on engine"},
+    {"trigger": "routine",             "service": "Air filter replacement",          "cost_low": 25,   "cost_high": 90,   "hours_low": 0.3, "hours_high": 0.8, "notes": "Engine or cabin filter"},
+    {"trigger": "engine_age_high",     "service": "Timing belt service",             "cost_low": 450,  "cost_high": 1200, "hours_low": 3.0, "hours_high": 6.0, "notes": "Major interval service"},
+    {"trigger": "battery_weak_severe", "service": "Alternator replacement",          "cost_low": 400,  "cost_high": 900,  "hours_low": 1.5, "hours_high": 3.5, "notes": "If battery drains persist"},
+    {"trigger": "age_high",            "service": "Suspension inspection",           "cost_low": 80,   "cost_high": 200,  "hours_low": 0.5, "hours_high": 1.5, "notes": "Diagnostic only"},
+    {"trigger": "multiple_flags",      "service": "Full inspection (multi-point)",   "cost_low": 100,  "cost_high": 250,  "hours_low": 1.0, "hours_high": 2.0, "notes": "Recommended when several signals flag"},
+    {"trigger": "default",             "service": "General service & diagnostic",    "cost_low": 90,   "cost_high": 260,  "hours_low": 0.8, "hours_high": 2.0, "notes": "Fallback estimate"},
+]
 
 
 @dataclass
@@ -34,19 +52,32 @@ class FeatureImpact:
     contribution: float # signed score in ~[-1, 1]; positive = pushes toward "maintenance"
 
 
+def _rows_to_dict(rows: list[dict]) -> dict[str, ServiceEstimate]:
+    return {
+        r["trigger"]: ServiceEstimate(
+            service=r["service"],
+            cost_low=float(r["cost_low"]),
+            cost_high=float(r["cost_high"]),
+            hours_low=float(r["hours_low"]),
+            hours_high=float(r["hours_high"]),
+            notes=r["notes"],
+        )
+        for r in rows
+    }
+
+
 def _load_costs() -> dict[str, ServiceEstimate]:
-    rows: dict[str, ServiceEstimate] = {}
-    with open(_COSTS_CSV, newline="") as f:
-        for r in csv.DictReader(f):
-            rows[r["trigger"]] = ServiceEstimate(
-                service=r["service"],
-                cost_low=float(r["cost_low"]),
-                cost_high=float(r["cost_high"]),
-                hours_low=float(r["hours_low"]),
-                hours_high=float(r["hours_high"]),
-                notes=r["notes"],
-            )
-    return rows
+    try:
+        from src.configuration.mongo_db_connection import MongoDBClient
+        client = MongoDBClient()
+        docs = list(client.database[_REPAIR_COSTS_COLLECTION].find({}, {"_id": 0}))
+        if docs:
+            logging.info(f"Loaded {len(docs)} repair cost rows from MongoDB.")
+            return _rows_to_dict(docs)
+        logging.warning("repair_costs collection is empty, using hardcoded fallback.")
+    except Exception as e:
+        logging.warning(f"MongoDB repair_costs fetch failed: {e} — using hardcoded fallback.")
+    return _rows_to_dict(_HARDCODED_COSTS)
 
 
 def pick_service(inputs: dict[str, Any], prob: float) -> ServiceEstimate:
