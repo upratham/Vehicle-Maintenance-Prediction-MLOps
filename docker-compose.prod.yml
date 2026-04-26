@@ -1,0 +1,26 @@
+# Production compose — uses pre-built ECR images.
+# Run: docker compose -f docker-compose.prod.yml up -d
+# Env vars are injected by the GitHub Actions workflow (or export them manually).
+
+services:
+  backend:
+    image: ${REGISTRY}/${REPO}:backend
+    ports:
+      - "8000:8000"
+    environment:
+      CONNECTION_URL: ${CONNECTION_URL}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+    volumes:
+      - ./artifact:/app/artifact
+      - ./logs:/app/logs
+    restart: unless-stopped
+
+  frontend:
+    image: ${REGISTRY}/${REPO}:frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

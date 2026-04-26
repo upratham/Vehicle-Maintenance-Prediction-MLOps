@@ -1,19 +1,20 @@
-name: Deploy Application Docker Image to EC2 instance
+name: Deploy Application to EC2
 
 on:
   push:
     branches: [main]
 
 jobs:
+  # ── Build & push both images to ECR ──────────────────────────────────────
   Continuous-Integration:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -21,28 +22,37 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
+      # Backend image
+      - name: Build and push backend image
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPO }}
-          IMAGE_TAG: latest
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPO: ${{ secrets.ECR_REPO }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .  
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker build -t $REGISTRY/$REPO:backend .
+          docker push $REGISTRY/$REPO:backend
 
+      # Frontend image
+      - name: Build and push frontend image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPO: ${{ secrets.ECR_REPO }}
+        run: |
+          docker build -t $REGISTRY/$REPO:frontend ./frontend
+          docker push $REGISTRY/$REPO:frontend
+
+  # ── Pull new images on EC2 and restart with compose ──────────────────────
   Continuous-Deployment:
     needs: Continuous-Integration
     runs-on: self-hosted
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -50,19 +60,26 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Stop and remove existing containers on port 5000
+      - name: Pull latest images
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPO: ${{ secrets.ECR_REPO }}
         run: |
-          # Stop containers exposing port 5000
-          docker ps --format '{{.ID}} {{.Ports}}' | grep '0.0.0.0:5000->' | awk '{print $1}' | xargs -r docker stop
-          # Remove stopped containers exposing port 5000
-          docker ps -a --format '{{.ID}} {{.Ports}}' | grep '0.0.0.0:5000->' | awk '{print $1}' | xargs -r docker rm
+          docker pull $REGISTRY/$REPO:backend
+          docker pull $REGISTRY/$REPO:frontend
 
-      - name: Pull latest Docker Image
-        run: |
-          docker pull "${{ steps.login-ecr.outputs.registry }}"/"${{ secrets.ECR_REPO }}":latest
+      - name: Stop existing containers
+        run: docker compose -f docker-compose.prod.yml down --remove-orphans || true
 
-      - name: Run Docker Image to serve users
+      - name: Start containers
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPO: ${{ secrets.ECR_REPO }}
+          CONNECTION_URL: ${{ secrets.MONGODB_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
-         docker run -d -e AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" -e AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" -e AWS_DEFAULT_REGION="${{ secrets.AWS_DEFAULT_REGION }}" -e MONGODB_URL="${{ secrets.MONGODB_URL }}" -p 5000:5000 "${{ steps.login-ecr.outputs.registry }}"/"${{ secrets.ECR_REPO }}":latest
+          docker compose -f docker-compose.prod.yml up -d
