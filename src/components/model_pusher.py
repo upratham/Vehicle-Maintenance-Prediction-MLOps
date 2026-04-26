@@ -39,6 +39,14 @@ def write_model_registry(
                 baselines = json.load(f).get("models", [])
         except Exception as exc:
             logging.warning(f"baselines.json unreadable: {exc}")
+    if not baselines:
+        try:
+            from src.artifact_store import load_baselines
+            doc = load_baselines()
+            if doc:
+                baselines = doc.get("models", [])
+        except Exception as exc:
+            logging.warning(f"baselines MongoDB fallback failed: {exc}")
 
     # Normalize metrics to the keys the Ops UI expects.
     # The evaluation artifact only carries f1 scalars; the full metrics live
@@ -105,7 +113,7 @@ class ModelPusher:
 
             try:
                 metrics = getattr(self.model_evaluation_artifact, "metrics", None) or {}
-                write_model_registry(
+                manifest = write_model_registry(
                     trained_model_path=self.model_evaluation_artifact.trained_model_path,
                     bucket_name=self.model_pusher_config.bucket_name,
                     s3_key=self.model_pusher_config.s3_model_key_path,
@@ -115,6 +123,11 @@ class ModelPusher:
                         self.model_pusher_config.training_pipeline_config.artifact_dir,
                         "baselines.json",
                     ),
+                )
+                from src.artifact_store import save_model_registry
+                save_model_registry(
+                    profile_name=self.model_pusher_config.training_pipeline_config.profile_name,
+                    manifest=manifest,
                 )
             except Exception as reg_err:
                 logging.warning(f"model_registry write skipped: {reg_err}")

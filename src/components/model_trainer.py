@@ -218,7 +218,7 @@ class BaseModelTrainer(ABC):
                 logging.warning(f"ClearML final logging skipped: {log_err}")
 
             try:
-                _train_baselines(
+                baselines_doc = _train_baselines(
                     X_train, y_train, X_test, y_test,
                     primary_metrics={
                         "name": f"{self.PROFILE_NAME} HPO",
@@ -229,6 +229,9 @@ class BaseModelTrainer(ABC):
                     output_path=self.model_trainer_config.baselines_file_path,
                     target_name=self.model_trainer_config.target_column,
                 )
+                if baselines_doc:
+                    from src.artifact_store import save_baselines
+                    save_baselines(profile_name=self.PROFILE_NAME, baselines=baselines_doc)
             except Exception as bl_err:
                 logging.warning(f"Baselines write skipped: {bl_err}")
 
