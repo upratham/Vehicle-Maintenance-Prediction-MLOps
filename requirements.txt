@@ -3,7 +3,6 @@ ipykernel>=7.1.0
 pandas>=2.3.3
 numpy>=2.4.1
 matplotlib>=3.10.8
-plotly>=6.5.2
 seaborn>=0.13.2
 
 # ── ML / modelling ─────────────────────────────────────────────────────────
@@ -11,9 +10,6 @@ scikit-learn>=1.8.0
 imbalanced-learn>=0.12.0       # SMOTE
 xgboost                        # baseline comparator
 optuna>=3.0.0                  # HPO search (Optuna backend)
-shap                           # per-prediction feature attribution
-tensorflow>=2.16.0             # production model evaluation (S3 models may be ANNs)
-torch
 # ── MLOps / experiment tracking ────────────────────────────────────────────
 clearml>=1.14.0                # experiment tracking + HPO logging
 clearml-agent                  # optional: run ClearML tasks as remote agents
