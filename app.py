@@ -442,4 +442,4 @@ async def train_endpoint(x_ops_token: Optional[str] = Header(default=None)):
 
 
 if __name__ == "__main__":
-    app_run(app, host=APP_HOST, port=5000)
+    app_run(app, host=APP_HOST, port=8000)

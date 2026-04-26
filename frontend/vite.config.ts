@@ -6,7 +6,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/predict': 'http://localhost:5000',
+      // proxies any path beginning with /predict (covers /predict, /predict/hyundai, /predict/engine)
+      '/predict': 'http://localhost:8000',
+      '/model_info': 'http://localhost:8000',
+      '/drift': 'http://localhost:8000',
+      '/train': 'http://localhost:8000',
     },
   },
 })
