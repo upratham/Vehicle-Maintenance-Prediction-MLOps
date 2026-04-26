@@ -47,10 +47,15 @@ class MongoDBClient:
         try:
             # Check if a MongoDB client connection has already been established; if not, create a new one
             if MongoDBClient.client is None:
-                mongo_db_url = MONGODB_URL_KEY # Retrieve MongoDB URL from environment variables
-                if mongo_db_url is None:
-                    raise Exception(f"Environment variable '{MONGODB_URL_KEY}' is not set.")
-                
+                # Re-read at connection time so docker-compose injected vars are always used
+                mongo_db_url = os.getenv("CONNECTION_URL") or MONGODB_URL_KEY
+                if not mongo_db_url:
+                    raise Exception("Environment variable 'CONNECTION_URL' is not set.")
+                if not (mongo_db_url.startswith("mongodb://") or mongo_db_url.startswith("mongodb+srv://")):
+                    raise Exception(
+                        f"CONNECTION_URL has invalid URI scheme (got: {mongo_db_url[:30]!r}). "
+                        "Must start with 'mongodb://' or 'mongodb+srv://'."
+                    )
                 # Establish a new MongoDB client connection
                 MongoDBClient.client = pymongo.MongoClient(mongo_db_url, tlsCAFile=ca, serverSelectionTimeoutMS=5000)
                 

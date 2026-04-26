@@ -359,15 +359,22 @@ def _read_json(path: str) -> Optional[dict]:
 @app.get("/model_info")
 async def model_info():
     """Expose the current model registry manifest + baselines for the Ops page."""
-    # Try MongoDB first, fall back to local filesystem
+    # MongoDB first; if it returns None (connection failed), fall through to filesystem
+    manifest = baselines = None
     try:
         from src.artifact_store import load_model_registry, load_baselines
-        manifest  = load_model_registry() or {}
-        baselines = load_baselines() or {}
+        manifest  = load_model_registry()
+        baselines = load_baselines()
     except Exception as e:
-        logging.warning(f"artifact_store load failed, falling back to filesystem: {e}")
-        manifest  = _read_json(_resolve_artifact("model_registry.json")) or {}
-        baselines = _read_json(_resolve_artifact("baselines.json")) or {}
+        logging.warning(f"artifact_store import failed: {e}")
+
+    if manifest is None:
+        manifest  = _read_json(_resolve_artifact("model_registry.json"))
+    if baselines is None:
+        baselines = _read_json(_resolve_artifact("baselines.json"))
+
+    manifest  = manifest  or {}
+    baselines = baselines or {}
 
     if not manifest.get("baselines"):
         manifest["baselines"] = baselines.get("models", [])
@@ -417,10 +424,16 @@ def _run_training(q: "queue.Queue[str]") -> None:
     root.addHandler(handler)
     try:
         from src.artifact_store import load_model_registry
-        before = load_model_registry() or _read_json(MODEL_REGISTRY_PATH) or {}
+        before = load_model_registry()
+        if before is None:
+            before = _read_json(MODEL_REGISTRY_PATH)
+        before = before or {}
         q.put_nowait("── Starting training pipeline ──")
         TrainPipeline().run_pipeline()
-        after = load_model_registry() or _read_json(MODEL_REGISTRY_PATH) or {}
+        after = load_model_registry()
+        if after is None:
+            after = _read_json(MODEL_REGISTRY_PATH)
+        after = after or {}
         summary = {
             "event": "done",
             "promoted": bool(after.get("promoted")),
