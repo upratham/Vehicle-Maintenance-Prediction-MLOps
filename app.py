@@ -30,8 +30,23 @@ from src.insights import pick_service, feature_impacts
 from src.drift import log_prediction, compute_drift
 from src.logger import logging
 
-MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")
-BASELINES_PATH = os.path.join("artifact", "baselines.json")
+def _resolve_artifact(filename: str) -> str:
+    """Find filename in the latest timestamped pipeline run dir; fall back to artifact/ root."""
+    pipeline_base = os.path.join("artifact", "vehicle_maintenance")
+    if os.path.isdir(pipeline_base):
+        runs = sorted(
+            [d for d in os.listdir(pipeline_base) if os.path.isdir(os.path.join(pipeline_base, d))],
+            reverse=True,
+        )
+        for run in runs:
+            candidate = os.path.join(pipeline_base, run, filename)
+            if os.path.exists(candidate):
+                return candidate
+    return os.path.join("artifact", filename)
+
+
+MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")  # legacy fallback only
+BASELINES_PATH = os.path.join("artifact", "baselines.json")            # legacy fallback only
 
 app = FastAPI()
 
@@ -344,11 +359,21 @@ def _read_json(path: str) -> Optional[dict]:
 @app.get("/model_info")
 async def model_info():
     """Expose the current model registry manifest + baselines for the Ops page."""
-    manifest = _read_json(MODEL_REGISTRY_PATH) or {}
-    baselines = _read_json(BASELINES_PATH) or {}
-    if "baselines" not in manifest or not manifest.get("baselines"):
+    manifest = _read_json(_resolve_artifact("model_registry.json")) or {}
+    baselines = _read_json(_resolve_artifact("baselines.json")) or {}
+    if not manifest.get("baselines"):
         manifest["baselines"] = baselines.get("models", [])
     manifest["baselines_computed_at"] = baselines.get("computed_at")
+
+    # Normalize metrics keys: pipeline writes {trained_model_f1_score, ...}
+    # but the UI expects {f1, precision, recall, roc_auc, accuracy}.
+    # The winner baseline entry already has all five — use it as the source.
+    m = manifest.get("metrics", {})
+    if "f1" not in m:
+        winner = next((b for b in manifest.get("baselines", []) if b.get("winner")), None)
+        if winner:
+            manifest["metrics"] = {k: winner.get(k) for k in ["f1", "precision", "recall", "roc_auc", "accuracy"]}
+
     return JSONResponse(manifest)
 
 

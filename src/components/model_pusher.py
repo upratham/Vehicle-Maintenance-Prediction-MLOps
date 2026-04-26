@@ -40,6 +40,15 @@ def write_model_registry(
         except Exception as exc:
             logging.warning(f"baselines.json unreadable: {exc}")
 
+    # Normalize metrics to the keys the Ops UI expects.
+    # The evaluation artifact only carries f1 scalars; the full metrics live
+    # on the winner baseline entry produced by model_trainer._train_baselines.
+    expected_keys = {"f1", "precision", "recall", "roc_auc", "accuracy"}
+    if not expected_keys.issubset(metrics.keys()):
+        winner = next((b for b in baselines if b.get("winner")), None)
+        if winner:
+            metrics = {k: winner.get(k) for k in expected_keys}
+
     version = datetime.now(timezone.utc).strftime("v%Y.%m.%d-%H%M")
     manifest = {
         "version": version,

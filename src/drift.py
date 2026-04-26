@@ -20,14 +20,29 @@ import numpy as np
 
 from src.logger import logging
 
-TRAINING_DIST_PATH = os.path.join("artifact", "training_distribution.json")
 PREDICTION_LOG_COLLECTION = "prediction_logs"
 
 
+def _resolve_training_dist_path() -> str:
+    """Find training_distribution.json in the latest pipeline run dir."""
+    pipeline_base = os.path.join("artifact", "vehicle_maintenance")
+    if os.path.isdir(pipeline_base):
+        runs = sorted(
+            [d for d in os.listdir(pipeline_base) if os.path.isdir(os.path.join(pipeline_base, d))],
+            reverse=True,
+        )
+        for run in runs:
+            candidate = os.path.join(pipeline_base, run, "training_distribution.json")
+            if os.path.exists(candidate):
+                return candidate
+    return os.path.join("artifact", "training_distribution.json")
+
+
 def _load_training_distribution() -> dict[str, Any] | None:
-    if not os.path.exists(TRAINING_DIST_PATH):
+    path = _resolve_training_dist_path()
+    if not os.path.exists(path):
         return None
-    with open(TRAINING_DIST_PATH) as f:
+    with open(path) as f:
         return json.load(f)
 
 
