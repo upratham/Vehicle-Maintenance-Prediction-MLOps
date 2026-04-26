@@ -270,14 +270,14 @@ function RetrainPanel({ onSummary }: { onSummary: () => void }) {
         <div className="flex flex-col sm:flex-row gap-3">
           <input
             type="password"
-            placeholder="X-Ops-Token"
+            placeholder="X-Ops-Token (leave blank if not set)"
             value={token}
             onChange={(e) => setToken(e.target.value)}
             className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono text-bone-100 placeholder:text-bone-600 focus:outline-none focus:border-ember-400/60"
           />
           <button
             onClick={run}
-            disabled={running || !token}
+            disabled={running}
             className="inline-flex items-center gap-2 rounded-lg bg-ember-400 text-ink-900 px-4 py-2 text-xs uppercase tracking-[0.22em] font-mono disabled:opacity-40 disabled:cursor-not-allowed hover:bg-ember-300 transition-colors"
           >
             <Play className="h-3.5 w-3.5" />
