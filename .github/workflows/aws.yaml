@@ -48,6 +48,9 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      - name: Fix workspace permissions
+        run: sudo chown -R $USER:$USER ${{ github.workspace }} || true
+
       - name: Checkout
         uses: actions/checkout@v3
 
