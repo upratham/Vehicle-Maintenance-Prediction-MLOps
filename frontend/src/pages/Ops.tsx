@@ -379,7 +379,7 @@ export function Ops() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-bone-400 text-[11px] font-mono uppercase tracking-[0.22em]">
-        <Database className="h-3.5 w-3.5" /> MLOps Ops Console
+        <Database className="h-3.5 w-3.5" /> MLOps Console
       </div>
       <ProfileTabs selected={profile} onSelect={setProfile} available={allInfo} />
       <RegistryCard info={info} />

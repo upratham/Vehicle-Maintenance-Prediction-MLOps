@@ -55,14 +55,34 @@ def write_model_registry(
         if winner:
             metrics = {k: winner.get(k) for k in expected_keys}
 
+    _FAMILY_LABEL = {
+        "ensemble-bagging-hpo": "Random Forest (HPO)",
+        "ensemble-bagging":     "Random Forest",
+        "kernel-svm-hpo":       "SVM (HPO)",
+        "kernel-svm":           "SVM",
+        "ensemble-boosting":    "XGBoost",
+        "linear":               "Logistic Regression",
+    }
+    _FAMILY_FRAMEWORK = {
+        "ensemble-bagging-hpo": "scikit-learn",
+        "ensemble-bagging":     "scikit-learn",
+        "kernel-svm-hpo":       "scikit-learn",
+        "kernel-svm":           "scikit-learn",
+        "ensemble-boosting":    "xgboost",
+        "linear":               "scikit-learn",
+    }
+    raw_family = (winner.get("family", "") if winner else "") or ""
+    model_family = _FAMILY_LABEL.get(raw_family, raw_family or "Unknown")
+    framework = _FAMILY_FRAMEWORK.get(raw_family, "scikit-learn")
+
     version = datetime.now(timezone.utc).strftime("v%Y.%m.%d-%H%M")
     manifest = {
         "version": version,
         "trained_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "sha256": _sha256(trained_model_path) if os.path.exists(trained_model_path) else None,
         "s3_uri": f"s3://{bucket_name}/{s3_key}",
-        "model_family": "Keras ANN (binary classifier)",
-        "framework": "TensorFlow 2.x",
+        "model_family": model_family,
+        "framework": framework,
         "params": params or {},
         "metrics": metrics,
         "baselines": baselines,
