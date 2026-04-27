@@ -23,11 +23,3 @@ services:
       - ./artifact:/app/artifact
       - ./logs:/app/logs
     restart: unless-stopped
-
-  frontend:
-    image: ${REGISTRY}/${REPO}:frontend
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    restart: unless-stopped

@@ -11,6 +11,7 @@ export interface BaselineModel {
 }
 
 export interface ModelInfo {
+  profile_name?: string;
   version?: string;
   trained_at?: string;
   sha256?: string;
@@ -30,6 +31,14 @@ export interface ModelInfo {
   baselines_computed_at?: string;
 }
 
+export type AllModelInfo = Record<string, ModelInfo>;
+
+export const PROFILE_LABELS: Record<string, string> = {
+  vehicle_maintenance: "Vehicle Maintenance",
+  cars_hyundai: "Vehicle Anomaly",
+  engine_data: "Engine Condition",
+};
+
 export interface DriftFeature {
   feature: string;
   type: "numeric" | "categorical";
@@ -47,9 +56,16 @@ export interface DriftReport {
   error?: string;
 }
 
-export async function fetchModelInfo(): Promise<ModelInfo> {
-  const r = await fetch("/model_info");
+export async function fetchModelInfo(profile?: string): Promise<ModelInfo> {
+  const url = profile ? `/model_info?profile=${encodeURIComponent(profile)}` : "/model_info";
+  const r = await fetch(url);
   if (!r.ok) throw new Error(`model_info failed (${r.status})`);
+  return r.json();
+}
+
+export async function fetchAllModelInfo(): Promise<AllModelInfo> {
+  const r = await fetch("/model_info/all");
+  if (!r.ok) throw new Error(`model_info/all failed (${r.status})`);
   return r.json();
 }
 

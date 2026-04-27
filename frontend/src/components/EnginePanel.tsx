@@ -1,7 +1,7 @@
 import { SensorPanel, type SensorPanelConfig } from "./SensorPanel";
 import { ENGINE_RANGES } from "../lib/anomalyRanges";
 
-export interface EngineInputs {
+export interface EngineInputs extends Record<string, number | string> {
   engine_rpm: number;
   lub_oil_pressure: number;
   fuel_pressure: number;

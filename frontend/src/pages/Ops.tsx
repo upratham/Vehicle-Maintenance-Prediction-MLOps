@@ -2,13 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, Cpu, Database, GitBranch, Play, Trophy } from "lucide-react";
 import {
+  fetchAllModelInfo,
   fetchDrift,
-  fetchModelInfo,
+  PROFILE_LABELS,
   startRetrain,
+  type AllModelInfo,
   type DriftReport,
   type ModelInfo,
   type RetrainSummary,
 } from "../lib/ops";
+
+const PROFILE_ORDER = ["vehicle_maintenance", "cars_hyundai", "engine_data"] as const;
+type ProfileName = (typeof PROFILE_ORDER)[number];
 
 const fmtPct = (n?: number) => (typeof n === "number" ? `${(n * 100).toFixed(1)}%` : "—");
 
@@ -320,22 +325,63 @@ function RetrainPanel({ onSummary }: { onSummary: () => void }) {
   );
 }
 
+function ProfileTabs({
+  selected,
+  onSelect,
+  available,
+}: {
+  selected: ProfileName;
+  onSelect: (p: ProfileName) => void;
+  available: AllModelInfo | null;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {PROFILE_ORDER.map((p) => {
+        const has = !!available?.[p]?.version;
+        const isActive = selected === p;
+        return (
+          <button
+            key={p}
+            onClick={() => onSelect(p)}
+            className={`px-3.5 py-1.5 rounded-lg text-[11px] uppercase tracking-[0.22em] font-mono transition-colors border ${
+              isActive
+                ? "bg-ember-400 text-ink-900 border-ember-400"
+                : "text-bone-300 border-white/10 hover:border-ember-400/40 hover:text-ember-300"
+            }`}
+          >
+            {PROFILE_LABELS[p] ?? p}
+            {!has && (
+              <span className={`ml-2 text-[9px] ${isActive ? "text-ink-900/60" : "text-bone-600"}`}>
+                · untrained
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Ops() {
-  const [info, setInfo] = useState<ModelInfo | null>(null);
+  const [allInfo, setAllInfo] = useState<AllModelInfo | null>(null);
+  const [profile, setProfile] = useState<ProfileName>("vehicle_maintenance");
   const [drift, setDrift] = useState<DriftReport | null>(null);
 
   const refresh = async () => {
-    try { setInfo(await fetchModelInfo()); } catch { /* noop */ }
+    try { setAllInfo(await fetchAllModelInfo()); } catch { /* noop */ }
     try { setDrift(await fetchDrift("7d")); } catch { /* noop */ }
   };
 
   useEffect(() => { refresh(); }, []);
+
+  const info: ModelInfo | null = allInfo?.[profile] ?? null;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-bone-400 text-[11px] font-mono uppercase tracking-[0.22em]">
         <Database className="h-3.5 w-3.5" /> MLOps Ops Console
       </div>
+      <ProfileTabs selected={profile} onSelect={setProfile} available={allInfo} />
       <RegistryCard info={info} />
       <BaselinesTable info={info} />
       <DriftCard report={drift} />

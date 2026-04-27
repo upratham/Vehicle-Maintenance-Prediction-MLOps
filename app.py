@@ -9,9 +9,8 @@ from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 from uvicorn import run as app_run
@@ -26,32 +25,23 @@ from src.pipeline.prediction_pipeline import (
     MultiModelOrchestrator,
     ProfileClassifier,
     VehicleData,
-    VehicleDataClassifier,
 )
 from src.pipeline.training_pipeline import TrainPipeline
-
-
-def _resolve_artifact(filename: str) -> str:
-    """Find filename in the latest timestamped pipeline run dir; fall back to artifact/ root."""
-    pipeline_base = os.path.join("artifact", "vehicle_maintenance")
-    if os.path.isdir(pipeline_base):
-        runs = sorted(
-            [d for d in os.listdir(pipeline_base) if os.path.isdir(os.path.join(pipeline_base, d))],
-            reverse=True,
-        )
-        for run in runs:
-            candidate = os.path.join(pipeline_base, run, filename)
-            if os.path.exists(candidate):
-                return candidate
-    return os.path.join("artifact", filename)
 
 
 MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")
 BASELINES_PATH = os.path.join("artifact", "baselines.json")
 
+# React SPA bundle (built into frontend/dist by the Dockerfile multi-stage build,
+# or by `npm run build` locally). Falls back to None when not yet built.
+SPA_DIST_DIR = os.path.join("frontend", "dist")
+SPA_INDEX = os.path.join(SPA_DIST_DIR, "index.html")
+SPA_ASSETS = os.path.join(SPA_DIST_DIR, "assets")
+
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+
+if os.path.isdir(SPA_ASSETS):
+    app.mount("/assets", StaticFiles(directory=SPA_ASSETS), name="assets")
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,59 +50,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-REQUIRED_FORM_FIELDS = (
-    "Reported_Issues", "Vehicle_Age", "Engine_Size", "Odometer_Reading",
-    "Accident_History", "Fuel_Efficiency",
-    "Tire_Condition", "Brake_Condition", "Battery_Status",
-    "Vehicle_Model", "Fuel_Type", "Transmission_Type",
-)
-
-
-@app.get("/", tags=["authentication"])
-async def index(request: Request):
-    """Render the legacy HTML form page."""
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={"request": request, "context": "Rendering"},
-    )
-
-
-@app.post("/")
-async def predictRouteClient(request: Request):
-    """Legacy form endpoint: receive form data, predict, render template."""
-    try:
-        form = await request.form()
-        values = {field: form.get(field) for field in REQUIRED_FORM_FIELDS}
-        missing = [k for k, v in values.items() if v in (None, "")]
-        if missing:
-            return templates.TemplateResponse(
-                request=request,
-                name="index.html",
-                context={"request": request, "context": f"Error: Missing required fields: {', '.join(missing)}"},
-                status_code=400,
-            )
-
-        vehicle_data = VehicleData(**values)
-        raw = VehicleDataClassifier().predict(dataframe=vehicle_data.get_vehicle_input_data_frame())[0]
-        score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
-        status = "Maintenance Required" if score >= 0.5 else "No Maintenance Needed"
-
-        return templates.TemplateResponse(
-            request=request,
-            name="index.html",
-            context={"request": request, "context": status},
-        )
-    except Exception as e:
-        logging.error(f"Prediction request failed: {e}", exc_info=True)
-        return templates.TemplateResponse(
-            request=request,
-            name="index.html",
-            context={"request": request, "context": f"Error: {e}"},
-            status_code=500,
-        )
 
 
 class PredictPayload(BaseModel):
@@ -220,24 +157,42 @@ def _read_json(path: str) -> Optional[dict]:
         return None
 
 
-@app.get("/model_info")
-async def model_info():
-    """Expose the current model registry manifest + baselines for the Ops page."""
+PROFILE_NAMES = ("vehicle_maintenance", "cars_hyundai", "engine_data")
+
+
+def _resolve_profile_artifact(profile_name: str, filename: str) -> str:
+    """Find filename in the latest timestamped pipeline run dir for the given profile."""
+    pipeline_base = os.path.join("artifact", profile_name)
+    if os.path.isdir(pipeline_base):
+        runs = sorted(
+            [d for d in os.listdir(pipeline_base) if os.path.isdir(os.path.join(pipeline_base, d))],
+            reverse=True,
+        )
+        for run in runs:
+            candidate = os.path.join(pipeline_base, run, filename)
+            if os.path.exists(candidate):
+                return candidate
+    return os.path.join("artifact", filename)
+
+
+def _load_model_info(profile_name: str) -> dict:
+    """Compose model registry manifest + baselines for one profile."""
     manifest = baselines = None
     try:
         from src.artifact_store import load_baselines, load_model_registry
-        manifest = load_model_registry()
-        baselines = load_baselines()
+        manifest = load_model_registry(profile_name=profile_name)
+        baselines = load_baselines(profile_name=profile_name)
     except Exception as e:
         logging.warning(f"artifact_store import failed: {e}")
 
     if manifest is None:
-        manifest = _read_json(_resolve_artifact("model_registry.json"))
+        manifest = _read_json(_resolve_profile_artifact(profile_name, "model_registry.json"))
     if baselines is None:
-        baselines = _read_json(_resolve_artifact("baselines.json"))
+        baselines = _read_json(_resolve_profile_artifact(profile_name, "baselines.json"))
 
     manifest = manifest or {}
     baselines = baselines or {}
+    manifest["profile_name"] = profile_name
 
     if not manifest.get("baselines"):
         manifest["baselines"] = baselines.get("models", [])
@@ -251,7 +206,19 @@ async def model_info():
         if winner:
             manifest["metrics"] = {k: winner.get(k) for k in ["f1", "precision", "recall", "roc_auc", "accuracy"]}
 
-    return JSONResponse(manifest)
+    return manifest
+
+
+@app.get("/model_info")
+async def model_info(profile: Optional[str] = None):
+    """Return one profile's model registry manifest + baselines (default: vehicle_maintenance)."""
+    return JSONResponse(_load_model_info(profile or "vehicle_maintenance"))
+
+
+@app.get("/model_info/all")
+async def model_info_all():
+    """Return registry+baselines for every known profile, keyed by profile name."""
+    return JSONResponse({name: _load_model_info(name) for name in PROFILE_NAMES})
 
 
 @app.get("/drift")
@@ -346,6 +313,18 @@ async def train_endpoint(x_ops_token: Optional[str] = Header(default=None)):
             yield f"data: {json.dumps({'line': line})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    """SPA catch-all: serve index.html for any unmatched GET so client-side routing works.
+    All API routes are registered above this and will match first."""
+    if os.path.exists(SPA_INDEX):
+        return FileResponse(SPA_INDEX)
+    return JSONResponse(
+        {"error": "Frontend bundle not built. Run `cd frontend && npm run build` or build via Docker."},
+        status_code=503,
+    )
 
 
 if __name__ == "__main__":

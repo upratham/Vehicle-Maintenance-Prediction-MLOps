@@ -3,7 +3,7 @@ import { HYUNDAI_RANGES } from "../lib/anomalyRanges";
 
 const MAINTENANCE_TYPES = ["Repair", "Routine Maintenance", "Component Replacement"] as const;
 
-export interface HyundaiInputs {
+export interface HyundaiInputs extends Record<string, number | string> {
   engine_temperature: number;
   brake_pad_thickness: number;
   tire_pressure: number;

@@ -24,7 +24,7 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Backend image
+      # Single backend image now bundles the React SPA via multi-stage Dockerfile
       - name: Build and push backend image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -32,15 +32,6 @@ jobs:
         run: |
           docker build -t $REGISTRY/$REPO:backend .
           docker push $REGISTRY/$REPO:backend
-
-      # Frontend image
-      - name: Build and push frontend image
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPO: ${{ secrets.ECR_REPO }}
-        run: |
-          docker build -t $REGISTRY/$REPO:frontend ./frontend
-          docker push $REGISTRY/$REPO:frontend
 
   # ── Pull new images on EC2 and restart with compose ──────────────────────
   Continuous-Deployment:
@@ -68,13 +59,12 @@ jobs:
       - name: Free disk space
         run: docker system prune -af || true
 
-      - name: Pull latest images
+      - name: Pull latest image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPO: ${{ secrets.ECR_REPO }}
         run: |
           docker pull $REGISTRY/$REPO:backend
-          docker pull $REGISTRY/$REPO:frontend
 
       - name: Stop existing containers
         run: docker compose -f docker-compose.prod.yml down --remove-orphans || true

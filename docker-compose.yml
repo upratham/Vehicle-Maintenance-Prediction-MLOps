@@ -10,13 +10,3 @@ services:
       - ./artifact:/app/artifact   # persist training artifacts across restarts
       - ./logs:/app/logs
     restart: unless-stopped
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    restart: unless-stopped
