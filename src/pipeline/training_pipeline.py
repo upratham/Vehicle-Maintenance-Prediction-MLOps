@@ -1,7 +1,7 @@
 import os
 import sys
 
-from src.cloud_storage.MangoDB import get_collection_name_from_csv, push_csv_to_mongodb
+from src.cloud_storage.MongoDB import get_collection_name_from_csv, push_csv_to_mongodb
 from src.components.data_ingestion import DataIngestion
 from src.components.data_transformation import DataTransformation
 from src.components.data_validation import DataValidation

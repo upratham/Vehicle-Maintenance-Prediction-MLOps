@@ -18,14 +18,14 @@ from uvicorn import run as app_run
 from typing import Optional
 
 from src.constants import APP_HOST
-from src.pipline.prediction_pipeline import (
+from src.pipeline.prediction_pipeline import (
     VehicleData,
     VehicleDataClassifier,
     HyundaiCarsData,
     EngineData,
     MultiModelOrchestrator,
 )
-from src.pipline.training_pipeline import TrainPipeline
+from src.pipeline.training_pipeline import TrainPipeline
 from src.insights import pick_service, feature_impacts
 from src.drift import log_prediction, compute_drift
 from src.logger import logging

@@ -2,6 +2,7 @@ import os
 from datetime import date
 from dotenv import load_dotenv
 import pandas as pd
+
 load_dotenv(override=True)
 # For MongoDB connection
 REFERENCE_DATE = pd.Timestamp("2026-03-07")

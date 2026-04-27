@@ -2,13 +2,10 @@ artifact
 .env
 .gitignore
 logs
-template.py
 demo.py
 README.md
 LICENSE
 src.egg-info
-notebooks
-plots
 frontend/node_modules
 frontend/dist
 data
