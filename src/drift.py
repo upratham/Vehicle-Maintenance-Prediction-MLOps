@@ -38,12 +38,44 @@ def _resolve_training_dist_path(profile_name: str = "vehicle_maintenance") -> st
     return os.path.join("artifact", f"{profile_name}_training_distribution.json")
 
 
-def _load_training_distribution(profile_name: str = "vehicle_maintenance") -> dict[str, Any] | None:
-    path = _resolve_training_dist_path(profile_name)
-    if not os.path.exists(path):
+def _load_training_distribution_from_s3(profile_name: str) -> dict[str, Any] | None:
+    try:
+        from src.cloud_storage.aws_storage import SimpleStorageService
+        from src.constants import MODEL_BUCKET_NAME, ARTIFACT_S3_PREFIX, MODEL_PUSHER_S3_KEY
+        s3 = SimpleStorageService()
+
+        # 1. Stable key (uploaded by model_pusher alongside model)
+        try:
+            key = f"{MODEL_PUSHER_S3_KEY}/{profile_name}/training_distribution.json"
+            body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
+            return json.loads(body)
+        except Exception:
+            pass
+
+        # 2. Newest timestamped artifact run that has the file
+        runs = s3.list_run_prefixes(MODEL_BUCKET_NAME, f"{ARTIFACT_S3_PREFIX}/{profile_name}")
+        for run_prefix in reversed(runs):
+            try:
+                key = f"{run_prefix}training_distribution.json"
+                body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
+                return json.loads(body)
+            except Exception:
+                continue
         return None
-    with open(path) as f:
-        return json.load(f)
+    except Exception as exc:
+        logging.warning(f"S3 training_distribution fetch failed [{profile_name}]: {exc}")
+        return None
+
+
+def _load_training_distribution(profile_name: str = "vehicle_maintenance") -> dict[str, Any] | None:
+    # 1. Local filesystem (dev / after a local training run)
+    path = _resolve_training_dist_path(profile_name)
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+
+    # 2. S3 (production — artifact dir doesn't exist in container)
+    return _load_training_distribution_from_s3(profile_name)
 
 
 def _mongo_collection():

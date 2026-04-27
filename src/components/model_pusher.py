@@ -150,6 +150,25 @@ class ModelPusher:
                     self.s3.s3_resource.Object(bucket, f"{stable_prefix}/baselines.json").put(Body=bf.read())
                 logging.info(f"Uploaded baselines -> s3://{bucket}/{stable_prefix}/baselines.json")
 
+            # Upload training_distribution.json so drift PSI works in production
+            from src.pipeline.training_pipeline import TrainingPipelineConfig
+            artifact_dir = self.model_pusher_config.training_pipeline_config.artifact_dir
+            profile_name = self.model_pusher_config.training_pipeline_config.profile_name
+            td_path = os.path.join(artifact_dir, "training_distribution.json")
+            if not os.path.exists(td_path):
+                # walk the profile artifact dir for the file
+                profile_base = os.path.join("artifact", profile_name)
+                if os.path.isdir(profile_base):
+                    for run in sorted(os.listdir(profile_base), reverse=True):
+                        candidate = os.path.join(profile_base, run, "training_distribution.json")
+                        if os.path.exists(candidate):
+                            td_path = candidate
+                            break
+            if os.path.exists(td_path):
+                with open(td_path, "rb") as tf:
+                    self.s3.s3_resource.Object(bucket, f"{stable_prefix}/training_distribution.json").put(Body=tf.read())
+                logging.info(f"Uploaded training_distribution -> s3://{bucket}/{stable_prefix}/training_distribution.json")
+
         except Exception as reg_err:
             logging.warning(f"model_registry write skipped: {reg_err}")
 
