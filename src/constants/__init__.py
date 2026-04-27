@@ -3,7 +3,8 @@ from datetime import date
 from dotenv import load_dotenv
 import pandas as pd
 
-load_dotenv(override=True)
+load_dotenv()  # never override vars already injected by docker-compose / CI
+
 # For MongoDB connection
 REFERENCE_DATE = pd.Timestamp("2026-03-07")
 PLOT_DIR = "plots"
