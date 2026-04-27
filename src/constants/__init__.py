@@ -82,5 +82,13 @@ MODEL_EVALUATION_CHANGED_THRESHOLD_SCORE: float = 0.02
 MODEL_BUCKET_NAME = "vehicle-maintenance-prediction-model"
 MODEL_PUSHER_S3_KEY = "model-registry"
 
+# Pipeline artifact archiving (stored in the same bucket as the model)
+ARTIFACT_S3_PREFIX = "pipeline-artifacts"
+MAX_ARTIFACT_RUNS = 3
+
+# Log retention
+LOG_S3_PREFIX = "pipeline-logs"
+MAX_LOG_FILES = 3
+
 APP_HOST = "0.0.0.0"
 APP_PORT = 5000

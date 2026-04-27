@@ -175,16 +175,49 @@ def _resolve_profile_artifact(profile_name: str, filename: str) -> str:
     return os.path.join("artifact", filename)
 
 
+def _load_json_from_s3(profile_name: str, filename: str) -> Optional[dict]:
+    """Download and parse a JSON artifact file from the latest S3 run for profile_name."""
+    try:
+        from src.cloud_storage.aws_storage import SimpleStorageService
+        from src.constants import MODEL_BUCKET_NAME, ARTIFACT_S3_PREFIX
+        s3 = SimpleStorageService()
+        runs = s3.list_run_prefixes(MODEL_BUCKET_NAME, f"{ARTIFACT_S3_PREFIX}/{profile_name}")
+        if not runs:
+            return None
+        # list_run_prefixes returns sorted oldest→newest; take the last entry
+        key = f"{runs[-1]}{filename}"
+        body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
+        return json.loads(body)
+    except Exception as exc:
+        logging.warning(f"S3 artifact fetch failed [{profile_name}/{filename}]: {exc}")
+        return None
+
+
 def _load_model_info(profile_name: str) -> dict:
-    """Compose model registry manifest + baselines for one profile."""
+    """Compose model registry manifest + baselines for one profile.
+
+    Priority:
+      1. MongoDB   — always current, works locally and in prod
+      2. S3        — production fallback when no local artifact dir exists
+      3. Local fs  — convenience for local dev
+    """
     manifest = baselines = None
+
+    # 1. MongoDB
     try:
         from src.artifact_store import load_baselines, load_model_registry
         manifest = load_model_registry(profile_name=profile_name)
         baselines = load_baselines(profile_name=profile_name)
     except Exception as e:
-        logging.warning(f"artifact_store import failed: {e}")
+        logging.warning(f"artifact_store unavailable: {e}")
 
+    # 2. S3 (production path — artifact dir won't exist in a container)
+    if manifest is None:
+        manifest = _load_json_from_s3(profile_name, "model_registry.json")
+    if baselines is None:
+        baselines = _load_json_from_s3(profile_name, "baselines.json")
+
+    # 3. Local filesystem (local dev convenience)
     if manifest is None:
         manifest = _read_json(_resolve_profile_artifact(profile_name, "model_registry.json"))
     if baselines is None:

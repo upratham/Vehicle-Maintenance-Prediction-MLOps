@@ -7,7 +7,11 @@ from src.components.data_validation import DataValidation
 from src.components.model_evaluation import ModelEvaluation
 from src.components.model_pusher import ModelPusher
 from src.components.model_trainer import ModelTrainer
-from src.constants import DATA_DIR, DATABASE_NAME, DROP_FEATURES, NOMINAL_FEATURES, ORDINAL_FEATURES
+from src.constants import (
+    DATA_DIR, DATABASE_NAME, DROP_FEATURES, NOMINAL_FEATURES, ORDINAL_FEATURES,
+    MODEL_BUCKET_NAME, ARTIFACT_S3_PREFIX, MAX_ARTIFACT_RUNS,
+    LOG_S3_PREFIX, MAX_LOG_FILES,
+)
 from src.entity.artifact_entity import (
     DataIngestionArtifact,
     DataTransformationArtifact,
@@ -93,6 +97,72 @@ class TrainPipeline:
         self.model_pusher_config = ModelPusherConfig(
             training_pipeline_config=self.training_pipeline_config,
         )
+
+    def _sync_artifact_to_s3(self, profile_name: str, artifact_dir: str, timestamp: str) -> None:
+        """Upload artifact_dir to S3, prune old S3 runs, and prune old local runs."""
+        import shutil
+        try:
+            from src.cloud_storage.aws_storage import SimpleStorageService
+            s3 = SimpleStorageService()
+            run_prefix = f"{ARTIFACT_S3_PREFIX}/{profile_name}/{timestamp}"
+            s3.upload_directory(artifact_dir, run_prefix, MODEL_BUCKET_NAME)
+
+            # Prune old S3 artifact runs
+            profile_prefix = f"{ARTIFACT_S3_PREFIX}/{profile_name}"
+            all_s3_runs = s3.list_run_prefixes(MODEL_BUCKET_NAME, profile_prefix)
+            stale_s3 = all_s3_runs[:-MAX_ARTIFACT_RUNS]
+            for old_prefix in stale_s3:
+                logging.info(f"[artifact-prune] Removing S3 run: s3://{MODEL_BUCKET_NAME}/{old_prefix}")
+                s3.delete_prefix(MODEL_BUCKET_NAME, old_prefix)
+            logging.info(
+                f"[artifact-prune] S3 {profile_name}: kept {len(all_s3_runs) - len(stale_s3)}, "
+                f"pruned {len(stale_s3)}"
+            )
+        except Exception as exc:
+            logging.warning(f"[artifact-prune] S3 sync skipped for {profile_name}: {exc}")
+
+        # Prune old local artifact runs (independent of S3 success)
+        try:
+            local_base = os.path.join("artifact", profile_name)
+            if os.path.isdir(local_base):
+                local_runs = sorted(
+                    d for d in os.listdir(local_base)
+                    if os.path.isdir(os.path.join(local_base, d))
+                )
+                for old_run in local_runs[:-MAX_ARTIFACT_RUNS]:
+                    shutil.rmtree(os.path.join(local_base, old_run), ignore_errors=True)
+                    logging.info(f"[artifact-prune] Removed local run: artifact/{profile_name}/{old_run}")
+        except Exception as exc:
+            logging.warning(f"[artifact-prune] local prune skipped for {profile_name}: {exc}")
+
+    def _sync_logs_to_s3(self) -> None:
+        """Upload the current log file to S3 and prune old S3 log objects to MAX_LOG_FILES."""
+        try:
+            from src.cloud_storage.aws_storage import SimpleStorageService
+            from src.logger import LOG_FILE, log_file_path
+            s3 = SimpleStorageService()
+
+            # Upload current log
+            s3_key = f"{LOG_S3_PREFIX}/{LOG_FILE}"
+            s3.s3_resource.meta.client.upload_file(log_file_path, MODEL_BUCKET_NAME, s3_key)
+            logging.info(f"[log-sync] Uploaded log -> s3://{MODEL_BUCKET_NAME}/{s3_key}")
+
+            # Prune old S3 log objects
+            all_logs = []
+            paginator = s3.s3_client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=MODEL_BUCKET_NAME, Prefix=f"{LOG_S3_PREFIX}/"):
+                for obj in page.get("Contents", []):
+                    all_logs.append(obj)
+            all_logs.sort(key=lambda o: o["LastModified"])
+            stale_logs = all_logs[:-MAX_LOG_FILES]
+            if stale_logs:
+                s3.s3_client.delete_objects(
+                    Bucket=MODEL_BUCKET_NAME,
+                    Delete={"Objects": [{"Key": o["Key"]} for o in stale_logs]},
+                )
+                logging.info(f"[log-sync] Pruned {len(stale_logs)} old S3 log(s)")
+        except Exception as exc:
+            logging.warning(f"[log-sync] S3 log sync skipped: {exc}")
 
     def start_csv_to_mongodb_sync(self, target_collections: list[str] | None = None) -> None:
         """Sync CSV files from DATA_DIR into MongoDB; optionally limit to a subset of collections."""
@@ -207,6 +277,10 @@ class TrainPipeline:
             if not model_evaluation_artifact.is_model_accepted:
                 logging.info(f"[{profile_name}] Model not accepted.")
                 results[profile_name] = {**base_result, "accepted": False, "pushed": False}
+                self._sync_artifact_to_s3(
+                    profile_name, self.training_pipeline_config.artifact_dir,
+                    self.training_pipeline_config.timestamp,
+                )
                 continue
 
             model_pusher_artifact = self.start_model_pusher(model_evaluation_artifact=model_evaluation_artifact)
@@ -216,6 +290,11 @@ class TrainPipeline:
                 "pushed": True,
                 "s3_model_path": model_pusher_artifact.s3_model_path,
             }
+            self._sync_artifact_to_s3(
+                profile_name, self.training_pipeline_config.artifact_dir,
+                self.training_pipeline_config.timestamp,
+            )
             logging.info(f"==================== [{profile_name}] pipeline complete ====================")
 
+        self._sync_logs_to_s3()
         return results
