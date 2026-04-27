@@ -4,6 +4,22 @@ from dotenv import load_dotenv
 
 load_dotenv()  # never override vars already injected by docker-compose / CI
 
+# Strip a single layer of matching surrounding quotes from env vars injected by
+# docker-compose / CI. GH Actions secrets keep literal quote characters if a
+# value was saved as "...". python-dotenv strips them locally, but Docker env
+# injection does not — ClearML then concatenates `"https://api.clear.ml"` with
+# `/auth.login` and `requests` rejects the malformed scheme.
+for _k in (
+    "CONNECTION_URL", "DB_USERNAME", "DB_PASSWORD", "COLLECTION_NAME",
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION", "AWS_DEFAULT_REGION",
+    "CLEARML_API_HOST", "CLEARML_WEB_HOST", "CLEARML_FILES_HOST",
+    "CLEARML_API_ACCESS_KEY", "CLEARML_API_SECRET_KEY",
+    "OPS_TOKEN",
+):
+    _v = os.environ.get(_k)
+    if _v and len(_v) >= 2 and _v[0] == _v[-1] and _v[0] in ("'", '"'):
+        os.environ[_k] = _v[1:-1]
+
 PLOT_DIR = "plots"
 
 DATABASE_NAME = os.getenv("DB_USERNAME")
