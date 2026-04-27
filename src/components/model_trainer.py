@@ -1,7 +1,6 @@
 import json
 import math
 import os
-import sys
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Tuple
@@ -15,7 +14,6 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.svm import SVC
 
-from src.exception import MyException
 from src.logger import logging
 from src.utils.main_utils import load_numpy_array_data, save_object
 from src.entity.config_entity import ModelTrainerConfig
@@ -82,29 +80,26 @@ def _train_baselines(X_train, y_train, X_test, y_test, primary_metrics: dict, ou
             "accuracy": float(accuracy_score(y_test, pred)),
         })
 
-    try:
-        _eval("Logistic Regression",
-              LogisticRegression(C=1.0, max_iter=500, solver="lbfgs"),
-              "linear",
-              {"C": 1.0, "penalty": "l2", "solver": "lbfgs", "max_iter": 500})
-    except Exception as e:
-        logging.warning(f"LR baseline failed: {e}")
-
-    try:
-        _eval("Random Forest",
-              RandomForestClassifier(n_estimators=300, max_depth=14, min_samples_leaf=3, random_state=42, n_jobs=-1),
-              "ensemble-bagging",
-              {"n_estimators": 300, "max_depth": 14, "min_samples_leaf": 3, "random_state": 42})
-    except Exception as e:
-        logging.warning(f"RF baseline failed: {e}")
-
-    try:
-        _eval("SVM",
-              SVC(C=1.0, kernel="rbf", gamma="scale", probability=True, random_state=42),
-              "kernel-svm",
-              {"C": 1.0, "kernel": "rbf", "gamma": "scale", "probability": True, "random_state": 42})
-    except Exception as e:
-        logging.warning(f"SVM baseline failed: {e}")
+    baselines_spec = [
+        ("Logistic Regression",
+         lambda: LogisticRegression(C=1.0, max_iter=500, solver="lbfgs"),
+         "linear",
+         {"C": 1.0, "penalty": "l2", "solver": "lbfgs", "max_iter": 500}),
+        ("Random Forest",
+         lambda: RandomForestClassifier(n_estimators=300, max_depth=14, min_samples_leaf=3,
+                                        random_state=42, n_jobs=-1),
+         "ensemble-bagging",
+         {"n_estimators": 300, "max_depth": 14, "min_samples_leaf": 3, "random_state": 42}),
+        ("SVM",
+         lambda: SVC(C=1.0, kernel="rbf", gamma="scale", probability=True, random_state=42),
+         "kernel-svm",
+         {"C": 1.0, "kernel": "rbf", "gamma": "scale", "probability": True, "random_state": 42}),
+    ]
+    for name, factory, family, hp in baselines_spec:
+        try:
+            _eval(name, factory(), family, hp)
+        except Exception as e:
+            logging.warning(f"{name} baseline failed: {e}")
 
     try:
         from xgboost import XGBClassifier
@@ -193,83 +188,68 @@ class BaseModelTrainer(ABC):
     def get_model_object_and_report(
         self, train: np.ndarray, test: np.ndarray
     ) -> Tuple[object, ClassificationMetricArtifact]:
+        X_train, y_train = train[:, :-1], train[:, -1]
+        X_test, y_test = test[:, :-1], test[:, -1]
+        params = self.model_trainer_config.params
+
+        task, logger = self._init_clearml_task()
+
+        logging.info(f"[{self.PROFILE_NAME}] Starting HPO.")
+        best_model, best_params, model_family = self.run_hpo(X_train, y_train, params, logger)
+
+        logging.info(f"[{self.PROFILE_NAME}] Fitting best model on full training set.")
+        best_model.fit(X_train, y_train)
+
+        metrics = self._evaluate(best_model, X_test, y_test)
+        logging.info(f"[{self.PROFILE_NAME}] Test metrics: {metrics}")
+
+        task.connect({"hpo_best_params": best_params})
         try:
-            X_train, y_train = train[:, :-1], train[:, -1]
-            X_test,  y_test  = test[:, :-1],  test[:, -1]
-            params = self.model_trainer_config.params
+            self._log_final_metrics(logger, metrics)
+            task.upload_artifact("trained_model", artifact_object=best_model)
+            task.close()
+        except Exception as log_err:
+            logging.warning(f"ClearML final logging skipped: {log_err}")
 
-            task, logger = self._init_clearml_task()
-
-            logging.info(f"[{self.PROFILE_NAME}] Starting HPO.")
-            best_model, best_params, model_family = self.run_hpo(X_train, y_train, params, logger)
-
-            logging.info(f"[{self.PROFILE_NAME}] Fitting best model on full training set.")
-            best_model.fit(X_train, y_train)
-
-            metrics = self._evaluate(best_model, X_test, y_test)
-            logging.info(f"[{self.PROFILE_NAME}] Test metrics: {metrics}")
-
-            task.connect({"hpo_best_params": best_params})
-            try:
-                self._log_final_metrics(logger, metrics)
-                task.upload_artifact("trained_model", artifact_object=best_model)
-                task.close()
-            except Exception as log_err:
-                logging.warning(f"ClearML final logging skipped: {log_err}")
-
-            try:
-                baselines_doc = _train_baselines(
-                    X_train, y_train, X_test, y_test,
-                    primary_metrics={
-                        "name": f"{self.PROFILE_NAME} HPO",
-                        "family": model_family,
-                        "hyperparams": best_params,
-                        **metrics,
-                    },
-                    output_path=self.model_trainer_config.baselines_file_path,
-                    target_name=self.model_trainer_config.target_column,
-                )
-                if baselines_doc:
-                    from src.artifact_store import save_baselines
-                    save_baselines(profile_name=self.PROFILE_NAME, baselines=baselines_doc)
-            except Exception as bl_err:
-                logging.warning(f"Baselines write skipped: {bl_err}")
-
-            metric_artifact = ClassificationMetricArtifact(
-                f1_score=metrics["f1"],
-                precision_score=metrics["precision"],
-                recall_score=metrics["recall"],
-                accuracy_score=metrics["accuracy"],
+        try:
+            baselines_doc = _train_baselines(
+                X_train, y_train, X_test, y_test,
+                primary_metrics={
+                    "name": f"{self.PROFILE_NAME} HPO",
+                    "family": model_family,
+                    "hyperparams": best_params,
+                    **metrics,
+                },
+                output_path=self.model_trainer_config.baselines_file_path,
+                target_name=self.model_trainer_config.target_column,
             )
-            return best_model, metric_artifact
+            if baselines_doc:
+                from src.artifact_store import save_baselines
+                save_baselines(profile_name=self.PROFILE_NAME, baselines=baselines_doc)
+        except Exception as bl_err:
+            logging.warning(f"Baselines write skipped: {bl_err}")
 
-        except Exception as e:
-            raise MyException(e, sys) from e
+        metric_artifact = ClassificationMetricArtifact(
+            f1_score=metrics["f1"],
+            precision_score=metrics["precision"],
+            recall_score=metrics["recall"],
+            accuracy_score=metrics["accuracy"],
+        )
+        return best_model, metric_artifact
 
     def initiate_model_trainer(self) -> ModelTrainerArtifact:
-        logging.info(f"[{self.PROFILE_NAME}] Entered initiate_model_trainer.")
-        try:
-            print("---" * 30)
-            print(f"Starting Model Trainer — {self.PROFILE_NAME}")
-            train_arr = load_numpy_array_data(self.data_transformation_artifact.transformed_train_file_path)
-            test_arr  = load_numpy_array_data(self.data_transformation_artifact.transformed_test_file_path)
-            logging.info("Train/test arrays loaded.")
+        logging.info(f"[{self.PROFILE_NAME}] Starting Model Trainer")
+        train_arr = load_numpy_array_data(self.data_transformation_artifact.transformed_train_file_path)
+        test_arr = load_numpy_array_data(self.data_transformation_artifact.transformed_test_file_path)
 
-            trained_model, metric_artifact = self.get_model_object_and_report(train_arr, test_arr)
+        trained_model, metric_artifact = self.get_model_object_and_report(train_arr, test_arr)
+        save_object(self.model_trainer_config.trained_model_file_path, trained_model)
 
-            save_object(self.model_trainer_config.trained_model_file_path, trained_model)
-            logging.info("Trained model saved.")
-
-            artifact = ModelTrainerArtifact(
-                trained_model_file_path=self.model_trainer_config.trained_model_file_path,
-                metric_artifact=metric_artifact,
-                profile_name=self.model_trainer_config.training_pipeline_config.profile_name,
-            )
-            logging.info(f"[{self.PROFILE_NAME}] ModelTrainerArtifact: {artifact}")
-            return artifact
-
-        except Exception as e:
-            raise MyException(e, sys) from e
+        return ModelTrainerArtifact(
+            trained_model_file_path=self.model_trainer_config.trained_model_file_path,
+            metric_artifact=metric_artifact,
+            profile_name=self.model_trainer_config.training_pipeline_config.profile_name,
+        )
 
 
 # ---------------------------------------------------------------------------

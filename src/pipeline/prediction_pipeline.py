@@ -1,6 +1,4 @@
 import os
-import sys
-from abc import ABC, abstractmethod
 
 import numpy as np
 from pandas import DataFrame
@@ -12,16 +10,9 @@ from src.constants import (
     PREPROCESSOR_OBJ_DIR,
     PREPROCSSING_OBJECT_FILE_NAME,
 )
-from src.entity.config_entity import VehiclePredictorConfig
 from src.entity.s3_estimator import Proj1Estimator
-from src.exception import MyException
-from src.logger import logging
 from src.utils.main_utils import load_object
 
-
-# ---------------------------------------------------------------------------
-# Infrastructure helpers
-# ---------------------------------------------------------------------------
 
 def _preprocessor_path(profile_name: str) -> str:
     path = os.path.join(PREPROCESSOR_OBJ_DIR, profile_name, PREPROCSSING_OBJECT_FILE_NAME)
@@ -37,75 +28,40 @@ def _s3_model_key(profile_name: str) -> str:
     return f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{MODEL_FILE_NAME}".replace("\\", "/")
 
 
-# ---------------------------------------------------------------------------
-# Base profile classifier
-# ---------------------------------------------------------------------------
+PROFILE_LABELS: dict[str, tuple[str, str]] = {
+    # profile_name : (label_when_1, label_when_0)
+    "vehicle_maintenance": ("Maintenance Required", "No Maintenance Needed"),
+    "cars_hyundai":        ("Anomaly Detected",     "Normal"),
+    "engine_data":         ("Engine Issue Detected", "Engine Healthy"),
+}
 
-class BaseProfileClassifier(ABC):
-    """
-    Loads the profile-specific preprocessor from disk and the model from S3,
-    then runs inference on a pre-built DataFrame.
-    Subclasses only need to declare PROFILE_NAME and implement label().
-    """
 
-    PROFILE_NAME: str = ""
+class ProfileClassifier:
+    """Config-driven classifier: loads the profile's preprocessor + S3 model and predicts."""
+
+    def __init__(self, profile_name: str):
+        if profile_name not in PROFILE_LABELS:
+            raise ValueError(
+                f"Unknown profile '{profile_name}'. Valid: {list(PROFILE_LABELS)}"
+            )
+        self.profile_name = profile_name
 
     def predict(self, dataframe: DataFrame) -> np.ndarray:
-        try:
-            logging.info(f"[{self.PROFILE_NAME}] Loading preprocessor.")
-            preprocessor = load_object(_preprocessor_path(self.PROFILE_NAME))
-            X = preprocessor.transform(dataframe)
-            logging.info(f"[{self.PROFILE_NAME}] Transformed shape: {X.shape}")
-
-            logging.info(f"[{self.PROFILE_NAME}] Loading model from S3.")
-            estimator = Proj1Estimator(
-                bucket_name=MODEL_BUCKET_NAME,
-                model_path=_s3_model_key(self.PROFILE_NAME),
-            )
-            return estimator.predict(X)
-        except Exception as e:
-            raise MyException(e, sys) from e
-
-    @abstractmethod
-    def label(self, value: int) -> str:
-        """Human-readable label for a binary prediction (0 or 1)."""
-
-
-# ---------------------------------------------------------------------------
-# Profile-specific classifiers
-# ---------------------------------------------------------------------------
-
-class VehicleMaintenanceClassifier(BaseProfileClassifier):
-    PROFILE_NAME = "vehicle_maintenance"
+        preprocessor = load_object(_preprocessor_path(self.profile_name))
+        X = preprocessor.transform(dataframe)
+        estimator = Proj1Estimator(
+            bucket_name=MODEL_BUCKET_NAME,
+            model_path=_s3_model_key(self.profile_name),
+        )
+        return estimator.predict(X)
 
     def label(self, value: int) -> str:
-        return "Maintenance Required" if value == 1 else "No Maintenance Needed"
+        on, off = PROFILE_LABELS[self.profile_name]
+        return on if value == 1 else off
 
-
-class HyundaiCarsClassifier(BaseProfileClassifier):
-    PROFILE_NAME = "cars_hyundai"
-
-    def label(self, value: int) -> str:
-        return "Anomaly Detected" if value == 1 else "Normal"
-
-
-class EngineDataClassifier(BaseProfileClassifier):
-    PROFILE_NAME = "engine_data"
-
-    def label(self, value: int) -> str:
-        return "Engine Issue Detected" if value == 1 else "Engine Healthy"
-
-
-# ---------------------------------------------------------------------------
-# Input data classes
-# ---------------------------------------------------------------------------
 
 class VehicleMaintenanceData:
-    """
-    Input features for the vehicle_maintenance model.
-    Columns match those present in the raw dataset (pre-preprocessor).
-    The preprocessor applies MI filtering / OHE / scaling internally.
-    """
+    """Input features for the vehicle_maintenance model (raw, pre-preprocessor)."""
 
     def __init__(
         self,
@@ -122,56 +78,42 @@ class VehicleMaintenanceData:
         Fuel_Type: str,
         Transmission_Type: str,
     ):
-        try:
-            self.Reported_Issues   = int(Reported_Issues)
-            self.Vehicle_Age       = int(Vehicle_Age)
-            self.Engine_Size       = float(Engine_Size)
-            self.Odometer_Reading  = float(Odometer_Reading)
-            self.Accident_History  = int(Accident_History)
-            self.Fuel_Efficiency   = float(Fuel_Efficiency)
-            self.Tire_Condition    = Tire_Condition
-            self.Brake_Condition   = Brake_Condition
-            self.Battery_Status    = Battery_Status
-            self.Vehicle_Model     = Vehicle_Model
-            self.Fuel_Type         = Fuel_Type
-            self.Transmission_Type = Transmission_Type
-        except Exception as e:
-            raise MyException(e, sys) from e
+        self.Reported_Issues = int(Reported_Issues)
+        self.Vehicle_Age = int(Vehicle_Age)
+        self.Engine_Size = float(Engine_Size)
+        self.Odometer_Reading = float(Odometer_Reading)
+        self.Accident_History = int(Accident_History)
+        self.Fuel_Efficiency = float(Fuel_Efficiency)
+        self.Tire_Condition = Tire_Condition
+        self.Brake_Condition = Brake_Condition
+        self.Battery_Status = Battery_Status
+        self.Vehicle_Model = Vehicle_Model
+        self.Fuel_Type = Fuel_Type
+        self.Transmission_Type = Transmission_Type
 
     def get_dataframe(self) -> DataFrame:
-        try:
-            return DataFrame({
-                "Reported_Issues":   [self.Reported_Issues],
-                "Vehicle_Age":       [self.Vehicle_Age],
-                "Engine_Size":       [self.Engine_Size],
-                "Odometer_Reading":  [self.Odometer_Reading],
-                "Accident_History":  [self.Accident_History],
-                "Fuel_Efficiency":   [self.Fuel_Efficiency],
-                "Tire_Condition":    [self.Tire_Condition],
-                "Brake_Condition":   [self.Brake_Condition],
-                "Battery_Status":    [self.Battery_Status],
-                "Vehicle_Model":     [self.Vehicle_Model],
-                "Fuel_Type":         [self.Fuel_Type],
-                "Transmission_Type": [self.Transmission_Type],
-            })
-        except Exception as e:
-            raise MyException(e, sys) from e
+        return DataFrame({
+            "Reported_Issues":   [self.Reported_Issues],
+            "Vehicle_Age":       [self.Vehicle_Age],
+            "Engine_Size":       [self.Engine_Size],
+            "Odometer_Reading":  [self.Odometer_Reading],
+            "Accident_History":  [self.Accident_History],
+            "Fuel_Efficiency":   [self.Fuel_Efficiency],
+            "Tire_Condition":    [self.Tire_Condition],
+            "Brake_Condition":   [self.Brake_Condition],
+            "Battery_Status":    [self.Battery_Status],
+            "Vehicle_Model":     [self.Vehicle_Model],
+            "Fuel_Type":         [self.Fuel_Type],
+            "Transmission_Type": [self.Transmission_Type],
+        })
 
-    # backward-compat alias used by the old app.py form route
     def get_vehicle_input_data_frame(self) -> DataFrame:
+        """Backward-compat alias used by the legacy form route."""
         return self.get_dataframe()
 
 
 class HyundaiCarsData:
-    """
-    Input features for the cars_hyundai anomaly-detection model.
-    Target: Anomaly Indication (binary). Features fed to the preprocessor:
-
-      engine_temperature  -> "Engine Temperature (°C)"  float
-      brake_pad_thickness -> "Brake Pad Thickness (mm)" float
-      tire_pressure       -> "Tire Pressure (PSI)"      float
-      maintenance_type    -> "Maintenance Type"          str   (Repair | Routine Maintenance | Component Replacement)
-    """
+    """Input features for the cars_hyundai anomaly-detection model."""
 
     def __init__(
         self,
@@ -180,37 +122,22 @@ class HyundaiCarsData:
         tire_pressure: float,
         maintenance_type: str,
     ):
-        try:
-            self.engine_temperature  = float(engine_temperature)
-            self.brake_pad_thickness = float(brake_pad_thickness)
-            self.tire_pressure       = float(tire_pressure)
-            self.maintenance_type    = str(maintenance_type)
-        except Exception as e:
-            raise MyException(e, sys) from e
+        self.engine_temperature = float(engine_temperature)
+        self.brake_pad_thickness = float(brake_pad_thickness)
+        self.tire_pressure = float(tire_pressure)
+        self.maintenance_type = str(maintenance_type)
 
     def get_dataframe(self) -> DataFrame:
-        try:
-            return DataFrame({
-                "Engine Temperature (°C)": [self.engine_temperature],
-                "Brake Pad Thickness (mm)": [self.brake_pad_thickness],
-                "Tire Pressure (PSI)":      [self.tire_pressure],
-                "Maintenance Type":          [self.maintenance_type],
-            })
-        except Exception as e:
-            raise MyException(e, sys) from e
+        return DataFrame({
+            "Engine Temperature (°C)":   [self.engine_temperature],
+            "Brake Pad Thickness (mm)":  [self.brake_pad_thickness],
+            "Tire Pressure (PSI)":       [self.tire_pressure],
+            "Maintenance Type":          [self.maintenance_type],
+        })
 
 
 class EngineData:
-    """
-    Input features for the engine_data condition model (all numeric).
-
-      engine_rpm       -> "Engine rpm"
-      lub_oil_pressure -> "Lub oil pressure"
-      fuel_pressure    -> "Fuel pressure"
-      coolant_pressure -> "Coolant pressure"
-      lub_oil_temp     -> "lub oil temp"
-      coolant_temp     -> "Coolant temp"
-    """
+    """Input features for the engine_data condition model (all numeric)."""
 
     def __init__(
         self,
@@ -221,95 +148,49 @@ class EngineData:
         lub_oil_temp: float,
         coolant_temp: float,
     ):
-        try:
-            self.engine_rpm       = float(engine_rpm)
-            self.lub_oil_pressure = float(lub_oil_pressure)
-            self.fuel_pressure    = float(fuel_pressure)
-            self.coolant_pressure = float(coolant_pressure)
-            self.lub_oil_temp     = float(lub_oil_temp)
-            self.coolant_temp     = float(coolant_temp)
-        except Exception as e:
-            raise MyException(e, sys) from e
+        self.engine_rpm = float(engine_rpm)
+        self.lub_oil_pressure = float(lub_oil_pressure)
+        self.fuel_pressure = float(fuel_pressure)
+        self.coolant_pressure = float(coolant_pressure)
+        self.lub_oil_temp = float(lub_oil_temp)
+        self.coolant_temp = float(coolant_temp)
 
     def get_dataframe(self) -> DataFrame:
-        try:
-            return DataFrame({
-                "Engine rpm":       [self.engine_rpm],
-                "Lub oil pressure": [self.lub_oil_pressure],
-                "Fuel pressure":    [self.fuel_pressure],
-                "Coolant pressure": [self.coolant_pressure],
-                "lub oil temp":     [self.lub_oil_temp],
-                "Coolant temp":     [self.coolant_temp],
-            })
-        except Exception as e:
-            raise MyException(e, sys) from e
+        return DataFrame({
+            "Engine rpm":       [self.engine_rpm],
+            "Lub oil pressure": [self.lub_oil_pressure],
+            "Fuel pressure":    [self.fuel_pressure],
+            "Coolant pressure": [self.coolant_pressure],
+            "lub oil temp":     [self.lub_oil_temp],
+            "Coolant temp":     [self.coolant_temp],
+        })
 
-
-# ---------------------------------------------------------------------------
-# Multi-model orchestrator
-# ---------------------------------------------------------------------------
 
 class MultiModelOrchestrator:
-    """
-    Routes a prediction request to the correct profile-specific classifier.
-
-    Example:
-        result = MultiModelOrchestrator().predict("cars_hyundai", df)
-        # {"profile": "cars_hyundai", "label": 1, "score": 0.82, "status": "Anomaly Detected"}
-    """
-
-    CLASSIFIERS: dict[str, type[BaseProfileClassifier]] = {
-        "vehicle_maintenance": VehicleMaintenanceClassifier,
-        "cars_hyundai":        HyundaiCarsClassifier,
-        "engine_data":         EngineDataClassifier,
-    }
+    """Route a prediction request to the correct profile-specific classifier."""
 
     def predict(self, profile_name: str, dataframe: DataFrame) -> dict:
-        try:
-            classifier_class = self.CLASSIFIERS.get(profile_name)
-            if classifier_class is None:
-                raise ValueError(
-                    f"Unknown profile '{profile_name}'. "
-                    f"Valid: {list(self.CLASSIFIERS)}"
-                )
-            classifier = classifier_class()
-            raw = classifier.predict(dataframe)[0]
-            score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
-            label = 1 if score >= 0.5 else 0
-            return {
-                "profile": profile_name,
-                "label":   label,
-                "score":   round(score, 4),
-                "status":  classifier.label(label),
-            }
-        except Exception as e:
-            raise MyException(e, sys) from e
+        classifier = ProfileClassifier(profile_name)
+        raw = classifier.predict(dataframe)[0]
+        score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
+        label = 1 if score >= 0.5 else 0
+        return {
+            "profile": profile_name,
+            "label":   label,
+            "score":   round(score, 4),
+            "status":  classifier.label(label),
+        }
 
 
-# ---------------------------------------------------------------------------
-# Backward-compatible aliases  (the legacy app.py form route imports these)
-# ---------------------------------------------------------------------------
-
+# Backward-compat aliases used by the legacy app.py form route.
 VehicleData = VehicleMaintenanceData
 
 
 class VehicleDataClassifier:
-    """
-    Thin wrapper kept for backward compatibility with the legacy HTML form route.
-    Delegates to VehicleMaintenanceClassifier internally.
-    """
+    """Thin wrapper kept for backward compatibility with the legacy HTML form route."""
 
-    def __init__(self, prediction_pipeline_config: VehiclePredictorConfig = VehiclePredictorConfig()):
-        self._config = prediction_pipeline_config
+    def __init__(self, prediction_pipeline_config=None):
+        self._classifier = ProfileClassifier("vehicle_maintenance")
 
     def predict(self, dataframe: DataFrame) -> np.ndarray:
-        try:
-            preprocessor = load_object(_preprocessor_path("vehicle_maintenance"))
-            X = preprocessor.transform(dataframe)
-            estimator = Proj1Estimator(
-                bucket_name=self._config.model_bucket_name,
-                model_path=_s3_model_key("vehicle_maintenance"),
-            )
-            return estimator.predict(X)
-        except Exception as e:
-            raise MyException(e, sys) from e
+        return self._classifier.predict(dataframe)

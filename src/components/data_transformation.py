@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 from datetime import datetime, timezone
 
 import matplotlib.pyplot as plt
@@ -20,7 +19,6 @@ from src.entity.artifact_entity import (
     DataValidationArtifact,
 )
 from src.entity.config_entity import DataTransformationConfig
-from src.exception import MyException
 from src.logger import logging
 from src.utils.main_utils import read_yaml_file, save_numpy_array_data, save_object
 
@@ -75,19 +73,16 @@ class BaseDataTransformation:
         data_transformation_config: DataTransformationConfig,
         data_validation_artifact: DataValidationArtifact,
     ):
-        try:
-            self.data_ingestion_artifact = data_ingestion_artifact
-            self.data_transformation_config = data_transformation_config
-            self.data_validation_artifact = data_validation_artifact
-            self._schema_config = read_yaml_file(file_path=self.data_transformation_config.schema_file_path)
-            self.profile_name = getattr(
-                self.data_transformation_config.training_pipeline_config,
-                "profile_name",
-                "",
-            )
-            self.target_column = self._resolve_target_column(self.data_transformation_config.target_column)
-        except Exception as e:
-            raise MyException(e, sys) from e
+        self.data_ingestion_artifact = data_ingestion_artifact
+        self.data_transformation_config = data_transformation_config
+        self.data_validation_artifact = data_validation_artifact
+        self._schema_config = read_yaml_file(file_path=self.data_transformation_config.schema_file_path)
+        self.profile_name = getattr(
+            self.data_transformation_config.training_pipeline_config,
+            "profile_name",
+            "",
+        )
+        self.target_column = self._resolve_target_column(self.data_transformation_config.target_column)
 
     @staticmethod
     def _normalize_col_name(name: str) -> str:
@@ -229,51 +224,48 @@ class BaseDataTransformation:
         )
 
     def initiate_data_transformation(self) -> DataTransformationArtifact:
+        logging.info(f"[{self.profile_name}] Data transformation started.")
+        if not self.data_validation_artifact.validation_status:
+            raise ValueError(self.data_validation_artifact.message)
+
+        df = pd.read_csv(self.data_ingestion_artifact.feature_store_file_path)
+        logging.info(f"[{self.profile_name}] Loaded feature store with shape {df.shape}.")
+
         try:
-            logging.info(f"[{self.profile_name}] Data transformation started.")
-            if not self.data_validation_artifact.validation_status:
-                raise ValueError(self.data_validation_artifact.message)
-
-            df = pd.read_csv(self.data_ingestion_artifact.feature_store_file_path)
-            logging.info(f"[{self.profile_name}] Loaded feature store with shape {df.shape}.")
-
-            try:
-                _write_training_distribution(
-                    raw_df=df,
-                    schema=self._schema_config,
-                    output_path=self.data_transformation_config.training_distribution_path,
-                )
-            except Exception as snap_err:
-                logging.warning(f"Training distribution snapshot skipped: {snap_err}")
-
-            df = self.handle_duplicates_and_missing_values(df)
-            df = self.prepare_dataframe(df)
-            X, y = self.split_features_and_target(df)
-            X_train, X_test, y_train, y_test = self.split_train_test(X, y)
-            y_train, y_test = self.encode_target(y_train=y_train, y_test=y_test)
-            X_train, X_test = self.post_split_train_processing(X_train=X_train, X_test=X_test)
-
-            preprocessor = self.build_preprocessor(X_train)
-            preprocessor.fit(X_train)
-            X_train_arr = preprocessor.transform(X_train)
-            X_test_arr = preprocessor.transform(X_test)
-            logging.info(
-                f"[{self.profile_name}] Preprocessing complete. "
-                f"Train shape={X_train_arr.shape}, Test shape={X_test_arr.shape}"
+            _write_training_distribution(
+                raw_df=df,
+                schema=self._schema_config,
+                output_path=self.data_transformation_config.training_distribution_path,
             )
+        except Exception as snap_err:
+            logging.warning(f"Training distribution snapshot skipped: {snap_err}")
 
-            X_train_arr, y_train_arr = self.apply_smote_if_needed(X_train_arr, y_train)
-            artifact = self._save_outputs(
-                preprocessor=preprocessor,
-                X_train=X_train_arr,
-                y_train=y_train_arr,
-                X_test=X_test_arr,
-                y_test=y_test,
-            )
-            logging.info(f"[{self.profile_name}] Data transformation completed successfully.")
-            return artifact
-        except Exception as e:
-            raise MyException(e, sys) from e
+        df = self.handle_duplicates_and_missing_values(df)
+        df = self.prepare_dataframe(df)
+        X, y = self.split_features_and_target(df)
+        X_train, X_test, y_train, y_test = self.split_train_test(X, y)
+        y_train, y_test = self.encode_target(y_train=y_train, y_test=y_test)
+        X_train, X_test = self.post_split_train_processing(X_train=X_train, X_test=X_test)
+
+        preprocessor = self.build_preprocessor(X_train)
+        preprocessor.fit(X_train)
+        X_train_arr = preprocessor.transform(X_train)
+        X_test_arr = preprocessor.transform(X_test)
+        logging.info(
+            f"[{self.profile_name}] Preprocessing complete. "
+            f"Train shape={X_train_arr.shape}, Test shape={X_test_arr.shape}"
+        )
+
+        X_train_arr, y_train_arr = self.apply_smote_if_needed(X_train_arr, y_train)
+        artifact = self._save_outputs(
+            preprocessor=preprocessor,
+            X_train=X_train_arr,
+            y_train=y_train_arr,
+            X_test=X_test_arr,
+            y_test=y_test,
+        )
+        logging.info(f"[{self.profile_name}] Data transformation completed successfully.")
+        return artifact
 
 
 class VehicleMaintenanceDataTransformation(BaseDataTransformation):

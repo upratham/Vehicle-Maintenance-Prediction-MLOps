@@ -66,18 +66,27 @@ def _rows_to_dict(rows: list[dict]) -> dict[str, ServiceEstimate]:
     }
 
 
+_costs_cache: dict[str, ServiceEstimate] | None = None
+
+
 def _load_costs() -> dict[str, ServiceEstimate]:
+    """Load repair-cost rows from MongoDB once, falling back to the hardcoded table."""
+    global _costs_cache
+    if _costs_cache is not None:
+        return _costs_cache
     try:
         from src.configuration.mongo_db_connection import MongoDBClient
         client = MongoDBClient()
         docs = list(client.database[_REPAIR_COSTS_COLLECTION].find({}, {"_id": 0}))
         if docs:
             logging.info(f"Loaded {len(docs)} repair cost rows from MongoDB.")
-            return _rows_to_dict(docs)
+            _costs_cache = _rows_to_dict(docs)
+            return _costs_cache
         logging.warning("repair_costs collection is empty, using hardcoded fallback.")
     except Exception as e:
         logging.warning(f"MongoDB repair_costs fetch failed: {e} — using hardcoded fallback.")
-    return _rows_to_dict(_HARDCODED_COSTS)
+    _costs_cache = _rows_to_dict(_HARDCODED_COSTS)
+    return _costs_cache
 
 
 def pick_service(inputs: dict[str, Any], prob: float) -> ServiceEstimate:

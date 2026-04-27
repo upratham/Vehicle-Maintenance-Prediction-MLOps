@@ -5,6 +5,7 @@ import os
 import queue
 import threading
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,20 +16,20 @@ from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 from uvicorn import run as app_run
 
-from typing import Optional
-
 from src.constants import APP_HOST
+from src.drift import compute_drift, log_prediction
+from src.insights import feature_impacts, pick_service
+from src.logger import logging
 from src.pipeline.prediction_pipeline import (
+    EngineData,
+    HyundaiCarsData,
+    MultiModelOrchestrator,
+    ProfileClassifier,
     VehicleData,
     VehicleDataClassifier,
-    HyundaiCarsData,
-    EngineData,
-    MultiModelOrchestrator,
 )
 from src.pipeline.training_pipeline import TrainPipeline
-from src.insights import pick_service, feature_impacts
-from src.drift import log_prediction, compute_drift
-from src.logger import logging
+
 
 def _resolve_artifact(filename: str) -> str:
     """Find filename in the latest timestamped pipeline run dir; fall back to artifact/ root."""
@@ -45,106 +46,33 @@ def _resolve_artifact(filename: str) -> str:
     return os.path.join("artifact", filename)
 
 
-MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")  # legacy fallback only
-BASELINES_PATH = os.path.join("artifact", "baselines.json")            # legacy fallback only
+MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")
+BASELINES_PATH = os.path.join("artifact", "baselines.json")
 
 app = FastAPI()
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory='templates')
+templates = Jinja2Templates(directory="templates")
 
-origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-class DataForm:
-    """
-    DataForm class to handle and process incoming form data
-    for the Vehicle Maintenance Prediction model.
-    """
-    def __init__(self, request: Request):
-        self.request: Request = request
+REQUIRED_FORM_FIELDS = (
+    "Reported_Issues", "Vehicle_Age", "Engine_Size", "Odometer_Reading",
+    "Accident_History", "Fuel_Efficiency",
+    "Tire_Condition", "Brake_Condition", "Battery_Status",
+    "Vehicle_Model", "Fuel_Type", "Transmission_Type",
+)
 
-        # Numerical fields
-        self.Reported_Issues: Optional[int] = None
-        self.Vehicle_Age: Optional[int] = None
-        self.Engine_Size: Optional[float] = None
-        self.Odometer_Reading: Optional[float] = None
-    
-        self.Accident_History: Optional[int] = None
-        self.Fuel_Efficiency: Optional[float] = None
-
-        # Ordinal categorical fields
-    
-        self.Tire_Condition: Optional[str] = None
-        self.Brake_Condition: Optional[str] = None
-        self.Battery_Status: Optional[str] = None
-
-        # Nominal categorical fields
-        # Vehicle_Model : Bus, Van, SUV, Truck, Motorcycle, Car
-        # Fuel_Type     : Diesel, Petrol, Electric
-        # Transmission  : Manual, Automatic
-        # Owner_Type    : First, Second, Third
-        self.Vehicle_Model: Optional[str] = None
-        self.Fuel_Type: Optional[str] = None
-        self.Transmission_Type: Optional[str] = None
-     
-
-        # Date fields
-   
-
-    async def get_vehicle_data(self):
-        """Retrieve and assign form data to class attributes."""
-        form = await self.request.form()
-
-        # Numerical
-      
-        self.Reported_Issues = form.get("Reported_Issues")
-        self.Vehicle_Age = form.get("Vehicle_Age")
-        self.Engine_Size = form.get("Engine_Size")
-        self.Odometer_Reading = form.get("Odometer_Reading")
-        self.Accident_History = form.get("Accident_History")
-        self.Fuel_Efficiency = form.get("Fuel_Efficiency")
-
-        # Ordinal categorical
-        self.Tire_Condition = form.get("Tire_Condition")
-        self.Brake_Condition = form.get("Brake_Condition")
-        self.Battery_Status = form.get("Battery_Status")
-
-        # Nominal categorical
-        self.Vehicle_Model = form.get("Vehicle_Model")
-        self.Fuel_Type = form.get("Fuel_Type")
-        self.Transmission_Type = form.get("Transmission_Type")
-
-    def get_missing_fields(self):
-        """Return a list of required fields that are missing or empty."""
-        required_fields = {
-            "Reported_Issues": self.Reported_Issues,
-            "Vehicle_Age": self.Vehicle_Age,
-            "Engine_Size": self.Engine_Size,
-            "Odometer_Reading": self.Odometer_Reading,
-            "Accident_History": self.Accident_History,
-            "Fuel_Efficiency": self.Fuel_Efficiency,
-            "Tire_Condition": self.Tire_Condition,
-            "Brake_Condition": self.Brake_Condition,
-            "Battery_Status": self.Battery_Status,
-            "Vehicle_Model": self.Vehicle_Model,
-            "Fuel_Type": self.Fuel_Type,
-            "Transmission_Type": self.Transmission_Type,
-        }
-        return [key for key, value in required_fields.items() if value in (None, "")]
-  
-       
 
 @app.get("/", tags=["authentication"])
 async def index(request: Request):
-    """Renders the main HTML form page for vehicle data input."""
+    """Render the legacy HTML form page."""
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -152,67 +80,31 @@ async def index(request: Request):
     )
 
 
-# @app.get("/train")
-# async def trainRouteClient():
-#     """Endpoint to initiate the model training pipeline."""
-#     try:
-#         train_pipeline = TrainPipeline()
-#         train_pipeline.run_pipeline()
-#         return Response("Training successful!!!")
-#     except Exception as e:
-#         return Response(f"Error Occurred! {e}")
-
-
 @app.post("/")
 async def predictRouteClient(request: Request):
-    """Endpoint to receive form data, process it, and make a prediction."""
+    """Legacy form endpoint: receive form data, predict, render template."""
     try:
-        form = DataForm(request)
-        await form.get_vehicle_data()
-
-        missing_fields = form.get_missing_fields()
-        if missing_fields:
+        form = await request.form()
+        values = {field: form.get(field) for field in REQUIRED_FORM_FIELDS}
+        missing = [k for k, v in values.items() if v in (None, "")]
+        if missing:
             return templates.TemplateResponse(
                 request=request,
                 name="index.html",
-                context={
-                    "request": request,
-                    "context": f"Error: Missing required fields: {', '.join(missing_fields)}",
-                },
+                context={"request": request, "context": f"Error: Missing required fields: {', '.join(missing)}"},
                 status_code=400,
             )
 
-        vehicle_data = VehicleData(
-            
-            Reported_Issues=form.Reported_Issues,
-            Vehicle_Age=form.Vehicle_Age,
-            Engine_Size=form.Engine_Size,
-            Odometer_Reading=form.Odometer_Reading,
-            Accident_History=form.Accident_History,
-            Fuel_Efficiency=form.Fuel_Efficiency,
-            Tire_Condition=form.Tire_Condition,
-            Brake_Condition=form.Brake_Condition,
-            Battery_Status=form.Battery_Status,
-            Vehicle_Model=form.Vehicle_Model,
-            Fuel_Type=form.Fuel_Type,
-            Transmission_Type=form.Transmission_Type,
-        )
-
-        vehicle_df = vehicle_data.get_vehicle_input_data_frame()
-
-        model_predictor = VehicleDataClassifier()
-        raw_prediction = model_predictor.predict(dataframe=vehicle_df)[0]
-        prediction_score = float(raw_prediction[0]) if hasattr(raw_prediction, "__len__") else float(raw_prediction)
-        value = 1 if prediction_score >= 0.5 else 0
-
-        status = "Maintenance Required" if value == 1 else "No Maintenance Needed"
+        vehicle_data = VehicleData(**values)
+        raw = VehicleDataClassifier().predict(dataframe=vehicle_data.get_vehicle_input_data_frame())[0]
+        score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
+        status = "Maintenance Required" if score >= 0.5 else "No Maintenance Needed"
 
         return templates.TemplateResponse(
             request=request,
             name="index.html",
             context={"request": request, "context": status},
         )
-
     except Exception as e:
         logging.error(f"Prediction request failed: {e}", exc_info=True)
         return templates.TemplateResponse(
@@ -241,108 +133,80 @@ class PredictPayload(BaseModel):
 @app.post("/predict")
 async def predict_json(payload: PredictPayload):
     """JSON prediction endpoint consumed by the React frontend."""
+    vehicle_data = VehicleData(**payload.model_dump())
+    classifier = ProfileClassifier("vehicle_maintenance")
+    raw = classifier.predict(dataframe=vehicle_data.get_vehicle_input_data_frame())[0]
+    score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
+    value = 1 if score >= 0.5 else 0
+    status = classifier.label(value)
+
+    raw_payload = payload.model_dump()
+    svc = pick_service(raw_payload, score)
+    impacts = feature_impacts(raw_payload)
+
+    response = {
+        "status": status,
+        "score": score,
+        "label": value,
+        "service": {
+            "name": svc.service,
+            "cost_low": svc.cost_low,
+            "cost_high": svc.cost_high,
+            "hours_low": svc.hours_low,
+            "hours_high": svc.hours_high,
+            "notes": svc.notes,
+        },
+        "impacts": [
+            {"feature": f.feature, "value": str(f.value), "contribution": f.contribution}
+            for f in impacts
+        ],
+        "explanations": [
+            {
+                "feature": f.feature,
+                "value": str(f.value),
+                "shap": round(f.contribution, 4),
+                "direction": "+" if f.contribution >= 0 else "-",
+            }
+            for f in impacts[:5]
+        ],
+    }
+
     try:
-        vehicle_data = VehicleData(**payload.model_dump())
-        vehicle_df = vehicle_data.get_vehicle_input_data_frame()
-        model_predictor = VehicleDataClassifier()
-        raw_prediction = model_predictor.predict(dataframe=vehicle_df)[0]
-        score = float(raw_prediction[0]) if hasattr(raw_prediction, "__len__") else float(raw_prediction)
-        value = 1 if score >= 0.5 else 0
-        status = "Maintenance Required" if value == 1 else "No Maintenance Needed"
+        log_prediction(raw_payload, response)
+    except Exception as log_err:
+        logging.warning(f"prediction logging skipped: {log_err}")
 
-        raw = payload.model_dump()
-        svc = pick_service(raw, score)
-        impacts = feature_impacts(raw)
+    return JSONResponse(response)
 
-        response = {
-            "status": status,
-            "score": score,
-            "label": value,
-            "service": {
-                "name": svc.service,
-                "cost_low": svc.cost_low,
-                "cost_high": svc.cost_high,
-                "hours_low": svc.hours_low,
-                "hours_high": svc.hours_high,
-                "notes": svc.notes,
-            },
-            "impacts": [
-                {"feature": f.feature, "value": str(f.value), "contribution": f.contribution}
-                for f in impacts
-            ],
-            "explanations": [
-                {
-                    "feature": f.feature,
-                    "value": str(f.value),
-                    "shap": round(f.contribution, 4),
-                    "direction": "+" if f.contribution >= 0 else "-",
-                }
-                for f in impacts[:5]
-            ],
-        }
-
-        try:
-            log_prediction(raw, response)
-        except Exception as log_err:
-            logging.warning(f"prediction logging skipped: {log_err}")
-
-        return JSONResponse(response)
-    except Exception as e:
-        logging.error(f"/predict failed: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Hyundai cars anomaly-detection endpoint
-# ──────────────────────────────────────────────────────────────────────────────
 
 class HyundaiCarsPredictPayload(BaseModel):
-    engine_temperature: float   # Engine Temperature (°C)
-    brake_pad_thickness: float  # Brake Pad Thickness (mm)
-    tire_pressure: float        # Tire Pressure (PSI)
-    maintenance_type: str       # Repair | Routine Maintenance | Component Replacement
+    engine_temperature: float
+    brake_pad_thickness: float
+    tire_pressure: float
+    maintenance_type: str
 
 
 @app.post("/predict/hyundai")
 async def predict_hyundai(payload: HyundaiCarsPredictPayload):
     """Anomaly-detection prediction for Hyundai cars dataset."""
-    try:
-        data = HyundaiCarsData(**payload.model_dump())
-        result = MultiModelOrchestrator().predict("cars_hyundai", data.get_dataframe())
-        return JSONResponse(result)
-    except Exception as e:
-        logging.error(f"/predict/hyundai failed: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+    data = HyundaiCarsData(**payload.model_dump())
+    return JSONResponse(MultiModelOrchestrator().predict("cars_hyundai", data.get_dataframe()))
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Engine condition endpoint
-# ──────────────────────────────────────────────────────────────────────────────
 
 class EngineDataPredictPayload(BaseModel):
-    engine_rpm: float        # Engine rpm
-    lub_oil_pressure: float  # Lub oil pressure
-    fuel_pressure: float     # Fuel pressure
-    coolant_pressure: float  # Coolant pressure
-    lub_oil_temp: float      # lub oil temp
-    coolant_temp: float      # Coolant temp
+    engine_rpm: float
+    lub_oil_pressure: float
+    fuel_pressure: float
+    coolant_pressure: float
+    lub_oil_temp: float
+    coolant_temp: float
 
 
 @app.post("/predict/engine")
 async def predict_engine(payload: EngineDataPredictPayload):
     """Engine condition prediction for engine_data dataset."""
-    try:
-        data = EngineData(**payload.model_dump())
-        result = MultiModelOrchestrator().predict("engine_data", data.get_dataframe())
-        return JSONResponse(result)
-    except Exception as e:
-        logging.error(f"/predict/engine failed: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# MLOps surface: model registry, retrain (SSE), drift
-# ──────────────────────────────────────────────────────────────────────────────
+    data = EngineData(**payload.model_dump())
+    return JSONResponse(MultiModelOrchestrator().predict("engine_data", data.get_dataframe()))
 
 
 def _read_json(path: str) -> Optional[dict]:
@@ -359,30 +223,28 @@ def _read_json(path: str) -> Optional[dict]:
 @app.get("/model_info")
 async def model_info():
     """Expose the current model registry manifest + baselines for the Ops page."""
-    # MongoDB first; if it returns None (connection failed), fall through to filesystem
     manifest = baselines = None
     try:
-        from src.artifact_store import load_model_registry, load_baselines
-        manifest  = load_model_registry()
+        from src.artifact_store import load_baselines, load_model_registry
+        manifest = load_model_registry()
         baselines = load_baselines()
     except Exception as e:
         logging.warning(f"artifact_store import failed: {e}")
 
     if manifest is None:
-        manifest  = _read_json(_resolve_artifact("model_registry.json"))
+        manifest = _read_json(_resolve_artifact("model_registry.json"))
     if baselines is None:
         baselines = _read_json(_resolve_artifact("baselines.json"))
 
-    manifest  = manifest  or {}
+    manifest = manifest or {}
     baselines = baselines or {}
 
     if not manifest.get("baselines"):
         manifest["baselines"] = baselines.get("models", [])
     manifest["baselines_computed_at"] = baselines.get("computed_at")
 
-    # Normalize metrics keys: pipeline writes {trained_model_f1_score, ...}
-    # but the UI expects {f1, precision, recall, roc_auc, accuracy}.
-    # The winner baseline entry already has all five — use it as the source.
+    # The winner baseline entry has the full {f1, precision, recall, roc_auc, accuracy} set;
+    # the pipeline-written metrics dict only has f1 scalars, so backfill from the winner.
     m = manifest.get("metrics", {})
     if "f1" not in m:
         winner = next((b for b in manifest.get("baselines", []) if b.get("winner")), None)
@@ -394,11 +256,14 @@ async def model_info():
 
 @app.get("/drift")
 async def drift_endpoint(window: str = "7d"):
-    try:
-        return JSONResponse(compute_drift(window=window))
-    except Exception as e:
-        logging.error(f"/drift failed: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse(compute_drift(window=window))
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Translate any unhandled exception into a JSON 500. HTTPException uses its own handler."""
+    logging.error(f"{request.method} {request.url.path} failed: {exc}", exc_info=True)
+    return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 class _SSEHandler(_py_logging.Handler):
@@ -407,10 +272,11 @@ class _SSEHandler(_py_logging.Handler):
     def __init__(self, q: "queue.Queue[str]"):
         super().__init__(level=_py_logging.INFO)
         self.q = q
-        self.setFormatter(_py_logging.Formatter("%(asctime)s  %(levelname)s  %(message)s",
-                                                datefmt="%H:%M:%S"))
+        self.setFormatter(_py_logging.Formatter(
+            "%(asctime)s  %(levelname)s  %(message)s", datefmt="%H:%M:%S",
+        ))
 
-    def emit(self, record: _py_logging.LogRecord) -> None:  # noqa: D401
+    def emit(self, record: _py_logging.LogRecord) -> None:
         try:
             self.q.put_nowait(self.format(record))
         except Exception:
@@ -424,16 +290,10 @@ def _run_training(q: "queue.Queue[str]") -> None:
     root.addHandler(handler)
     try:
         from src.artifact_store import load_model_registry
-        before = load_model_registry()
-        if before is None:
-            before = _read_json(MODEL_REGISTRY_PATH)
-        before = before or {}
+        before = load_model_registry() or _read_json(MODEL_REGISTRY_PATH) or {}
         q.put_nowait("── Starting training pipeline ──")
         TrainPipeline().run_pipeline()
-        after = load_model_registry()
-        if after is None:
-            after = _read_json(MODEL_REGISTRY_PATH)
-        after = after or {}
+        after = load_model_registry() or _read_json(MODEL_REGISTRY_PATH) or {}
         summary = {
             "event": "done",
             "promoted": bool(after.get("promoted")),

@@ -1,15 +1,20 @@
-from src.entity.config_entity import ModelEvaluationConfig
-from src.entity.artifact_entity import ModelTrainerArtifact, DataIngestionArtifact, ModelEvaluationArtifact,DataTransformationArtifact
+from dataclasses import dataclass
+from typing import Optional
+
+import numpy as np
 from sklearn.metrics import f1_score
-from src.exception import MyException
+
+from src.entity.config_entity import ModelEvaluationConfig
+from src.entity.artifact_entity import (
+    ModelTrainerArtifact,
+    DataIngestionArtifact,
+    ModelEvaluationArtifact,
+    DataTransformationArtifact,
+)
+from src.entity.s3_estimator import Proj1Estimator
 from src.logger import logging
 from src.utils.main_utils import load_object, load_numpy_array_data
-import sys
-import numpy as np
-import pandas as pd
-from typing import Optional
-from src.entity.s3_estimator import Proj1Estimator
-from dataclasses import dataclass
+
 
 @dataclass
 class EvaluateModelResponse:
@@ -20,130 +25,81 @@ class EvaluateModelResponse:
 
 
 class ModelEvaluation:
-
-    def __init__(self, model_eval_config: ModelEvaluationConfig, data_ingestion_artifact: DataIngestionArtifact,
-                 model_trainer_artifact: ModelTrainerArtifact, data_transformation_artifact: DataTransformationArtifact):
-        try:
-            self.model_eval_config = model_eval_config
-            self.data_ingestion_artifact = data_ingestion_artifact
-            self.model_trainer_artifact = model_trainer_artifact
-            self.data_transformation_artifact = data_transformation_artifact
-
-        except Exception as e:
-            raise MyException(e, sys) from e
+    def __init__(
+        self,
+        model_eval_config: ModelEvaluationConfig,
+        data_ingestion_artifact: DataIngestionArtifact,
+        model_trainer_artifact: ModelTrainerArtifact,
+        data_transformation_artifact: DataTransformationArtifact,
+    ):
+        self.model_eval_config = model_eval_config
+        self.data_ingestion_artifact = data_ingestion_artifact
+        self.model_trainer_artifact = model_trainer_artifact
+        self.data_transformation_artifact = data_transformation_artifact
 
     def get_best_model(self) -> Optional[Proj1Estimator]:
-        """
-        Method Name :   get_best_model
-        Description :   This function is used to get model from production stage.
-        
-        Output      :   Returns model object if available in s3 storage
-        On Failure  :   Write an exception log and then raise an exception
-        """
-        try:
-            bucket_name = self.model_eval_config.bucket_name
-            model_path=self.model_eval_config.s3_model_key_path
-            proj1_estimator = Proj1Estimator(bucket_name=bucket_name,
-                                               model_path=model_path)
-
-            if proj1_estimator.is_model_present(model_path=model_path):
-                return proj1_estimator
-            return None
-        except Exception as e:
-            raise  MyException(e,sys)
-        
-
-
-
-
+        """Return the deployed S3 model if present, else None."""
+        bucket_name = self.model_eval_config.bucket_name
+        model_path = self.model_eval_config.s3_model_key_path
+        proj1_estimator = Proj1Estimator(bucket_name=bucket_name, model_path=model_path)
+        if proj1_estimator.is_model_present(model_path=model_path):
+            return proj1_estimator
+        return None
 
     def evaluate_model(self) -> EvaluateModelResponse:
-        """
-        Method Name :   evaluate_model
-        Description :   This function is used to evaluate trained model 
-                        with production model and choose best model 
-        
-        Output      :   Returns bool value based on validation results
-        On Failure  :   Write an exception log and then raise an exception
-        """
-        try:
-            test_arr = load_numpy_array_data(file_path=self.data_transformation_artifact.transformed_test_file_path)
-            x, y = test_arr[:, :-1], test_arr[:, -1]
+        test_arr = load_numpy_array_data(file_path=self.data_transformation_artifact.transformed_test_file_path)
+        x, y = test_arr[:, :-1], test_arr[:, -1]
 
-            logging.info("Test data loaded ")
+        load_object(file_path=self.model_trainer_artifact.trained_model_file_path)
+        trained_model_f1_score = self.model_trainer_artifact.metric_artifact.f1_score
+        logging.info(f"F1_Score for this model: {trained_model_f1_score}")
 
-            trained_model = load_object(file_path=self.model_trainer_artifact.trained_model_file_path)
-            logging.info("Trained model loaded/exists.")
-            trained_model_f1_score = self.model_trainer_artifact.metric_artifact.f1_score
-            logging.info(f"F1_Score for this model: {trained_model_f1_score}")
-
-            best_model_f1_score=None
-            best_model = self.get_best_model()
-            if best_model is not None:
-                logging.info(f"Computing F1_Score for production model..")
-                try:
-                    raw_predictions = np.asarray(best_model.predict(x))
-                    if raw_predictions.ndim == 2:
-                        if raw_predictions.shape[1] == 1:
-                            y_hat_best_model = (raw_predictions.ravel() >= 0.5).astype(int)
-                        else:
-                            y_hat_best_model = np.argmax(raw_predictions, axis=1)
+        best_model_f1_score = None
+        best_model = self.get_best_model()
+        if best_model is not None:
+            try:
+                raw_predictions = np.asarray(best_model.predict(x))
+                if raw_predictions.ndim == 2:
+                    if raw_predictions.shape[1] == 1:
+                        y_hat_best_model = (raw_predictions.ravel() >= 0.5).astype(int)
                     else:
-                        y_hat_best_model = raw_predictions.ravel()
+                        y_hat_best_model = np.argmax(raw_predictions, axis=1)
+                else:
+                    y_hat_best_model = raw_predictions.ravel()
 
-                    average = "binary" if len(np.unique(y)) <= 2 else "weighted"
-                    best_model_f1_score = f1_score(y, y_hat_best_model, average=average)
-                    logging.info(
-                        f"F1_Score-Production Model: {best_model_f1_score}, "
-                        f"F1_Score-New Trained Model: {trained_model_f1_score}"
-                    )
-                except Exception as best_model_err:
-                    logging.warning(
-                        "Skipping production-model comparison because the deployed model "
-                        f"is incompatible with the current transformed features: {best_model_err}"
-                    )
-                    best_model_f1_score = None
-            
-            tmp_best_model_score = 0 if best_model_f1_score is None else best_model_f1_score
-            result = EvaluateModelResponse(trained_model_f1_score=trained_model_f1_score,
-                                           best_model_f1_score=best_model_f1_score,
-                                           is_model_accepted=trained_model_f1_score > tmp_best_model_score,
-                                           difference=trained_model_f1_score - tmp_best_model_score
-                                           )
-            logging.info(f"Result: {result}")
-            return result
+                average = "binary" if len(np.unique(y)) <= 2 else "weighted"
+                best_model_f1_score = f1_score(y, y_hat_best_model, average=average)
+                logging.info(
+                    f"F1_Score-Production Model: {best_model_f1_score}, "
+                    f"F1_Score-New Trained Model: {trained_model_f1_score}"
+                )
+            except Exception as best_model_err:
+                logging.warning(
+                    "Skipping production-model comparison because the deployed model "
+                    f"is incompatible with the current transformed features: {best_model_err}"
+                )
+                best_model_f1_score = None
 
-        except Exception as e:
-            raise MyException(e, sys)
+        tmp_best_model_score = 0 if best_model_f1_score is None else best_model_f1_score
+        return EvaluateModelResponse(
+            trained_model_f1_score=trained_model_f1_score,
+            best_model_f1_score=best_model_f1_score,
+            is_model_accepted=trained_model_f1_score > tmp_best_model_score,
+            difference=trained_model_f1_score - tmp_best_model_score,
+        )
 
     def initiate_model_evaluation(self) -> ModelEvaluationArtifact:
-        """
-        Method Name :   initiate_model_evaluation
-        Description :   This function is used to initiate all steps of the model evaluation
-        
-        Output      :   Returns model evaluation artifact
-        On Failure  :   Write an exception log and then raise an exception
-        """  
-        try:
-            print("------------------------------------------------------------------------------------------------")
-            logging.info("Initialized Model Evaluation Component.")
-            evaluate_model_response = self.evaluate_model()
-            s3_model_path = self.model_eval_config.s3_model_key_path
-
-            model_evaluation_artifact = ModelEvaluationArtifact(
-                is_model_accepted=evaluate_model_response.is_model_accepted,
-                s3_model_path=s3_model_path,
-                trained_model_path=self.model_trainer_artifact.trained_model_file_path,
-                changed_accuracy=evaluate_model_response.difference,
-                metrics={
-                    "trained_model_f1_score": evaluate_model_response.trained_model_f1_score,
-                    "best_model_f1_score": evaluate_model_response.best_model_f1_score,
-                    "difference": evaluate_model_response.difference,
-                },
-                profile_name=self.model_eval_config.training_pipeline_config.profile_name,
-            )
-
-            logging.info(f"Model evaluation artifact: {model_evaluation_artifact}")
-            return model_evaluation_artifact
-        except Exception as e:
-            raise MyException(e, sys) from e
+        logging.info("Initialized Model Evaluation Component.")
+        evaluate_model_response = self.evaluate_model()
+        return ModelEvaluationArtifact(
+            is_model_accepted=evaluate_model_response.is_model_accepted,
+            s3_model_path=self.model_eval_config.s3_model_key_path,
+            trained_model_path=self.model_trainer_artifact.trained_model_file_path,
+            changed_accuracy=evaluate_model_response.difference,
+            metrics={
+                "trained_model_f1_score": evaluate_model_response.trained_model_f1_score,
+                "best_model_f1_score": evaluate_model_response.best_model_f1_score,
+                "difference": evaluate_model_response.difference,
+            },
+            profile_name=self.model_eval_config.training_pipeline_config.profile_name,
+        )

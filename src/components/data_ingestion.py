@@ -1,90 +1,40 @@
 import os
-import sys
 
 import pandas as pd
 from pandas import DataFrame
-from sklearn.model_selection import train_test_split
 
 from src.entity.config_entity import DataIngestionConfig
 from src.entity.artifact_entity import DataIngestionArtifact
-from src.exception import MyException
 from src.logger import logging
 from src.data_access.proj1_data import Proj1Data
 
+
 class DataIngestion:
-    def __init__(self,data_ingestion_config:DataIngestionConfig=DataIngestionConfig()):
-        """
-        :param data_ingestion_config: configuration for data ingestion
-        """
-        try:
-            self.data_ingestion_config = data_ingestion_config
-        except Exception as e:
-            raise MyException(e,sys)
-        
+    def __init__(self, data_ingestion_config: DataIngestionConfig = DataIngestionConfig()):
+        self.data_ingestion_config = data_ingestion_config
 
-    def export_data_into_feature_store(self)->DataFrame:
-        """
-        Method Name :   export_data_into_feature_store
-        Description :   This method exports data from mongodb to csv file, with a
-                        stable local cache so repeat runs skip the network round-trip.
+    def export_data_into_feature_store(self) -> DataFrame:
+        """Export data from local CSV cache if present, else MongoDB; persist to the feature store path."""
+        feature_store_file_path = self.data_ingestion_config.feature_store_file_path
+        collection_name = self.data_ingestion_config.collection_name
+        local_csv_path = os.path.join("data", f"{collection_name}.csv")
 
-        Output      :   data is returned as artifact of data ingestion components
-        On Failure  :   Write an exception log and then raise an exception
-        """
-        try:
-            feature_store_file_path = self.data_ingestion_config.feature_store_file_path
-            collection_name = self.data_ingestion_config.collection_name
+        if os.path.exists(local_csv_path) and os.path.getsize(local_csv_path) > 0:
+            logging.info(f"[{collection_name}] Loading from local CSV {local_csv_path}; skipping MongoDB.")
+            dataframe = pd.read_csv(local_csv_path)
+        else:
+            logging.info(f"Exporting data from mongodb (collection={collection_name})")
+            my_data = Proj1Data(database_name=self.data_ingestion_config.database_name)
+            dataframe = my_data.export_collection_as_dataframe(collection_name=collection_name)
 
-            # Use local CSV in data/ if available — skips the MongoDB network round-trip
-            local_csv_path = os.path.join("data", f"{collection_name}.csv")
+        logging.info(f"Shape of dataframe: {dataframe.shape}")
+        os.makedirs(os.path.dirname(feature_store_file_path), exist_ok=True)
+        dataframe.to_csv(feature_store_file_path, index=False, header=True)
+        return dataframe
 
-            if os.path.exists(local_csv_path) and os.path.getsize(local_csv_path) > 0:
-                logging.info(
-                    f"[{collection_name}] Local CSV found — loading from {local_csv_path}, "
-                    "skipping MongoDB fetch."
-                )
-                dataframe = pd.read_csv(local_csv_path)
-            else:
-                logging.info(f"Exporting data from mongodb (collection={collection_name})")
-                my_data = Proj1Data(database_name=self.data_ingestion_config.database_name)
-                dataframe = my_data.export_collection_as_dataframe(collection_name=collection_name)
-
-            logging.info(f"Shape of dataframe: {dataframe.shape}")
-            dir_path = os.path.dirname(feature_store_file_path)
-            os.makedirs(dir_path, exist_ok=True)
-            logging.info(f"Saving exported data into feature store file path: {feature_store_file_path}")
-            dataframe.to_csv(feature_store_file_path, index=False, header=True)
-            return dataframe
-
-        except Exception as e:
-            raise MyException(e,sys)
-
-    def initiate_data_ingestion(self) ->DataIngestionArtifact:
-        """
-        Method Name :   initiate_data_ingestion
-        Description :   This method initiates the data ingestion components of training pipeline 
-        
-        Output      :   train set and test set are returned as the artifacts of data ingestion components
-        On Failure  :   Write an exception log and then raise an exception
-        """
-        logging.info("Entered initiate_data_ingestion method of Data_Ingestion class")
-
-        try:
-            dataframe = self.export_data_into_feature_store()
-
-            logging.info("Got the data from mongodb")
-
-
-            logging.info(
-                "Exited initiate_data_ingestion method of Data_Ingestion class"
-            )
-
-            data_ingestion_artifact = DataIngestionArtifact(
-                feature_store_file_path=self.data_ingestion_config.feature_store_file_path,
-                profile_name=getattr(self.data_ingestion_config.training_pipeline_config, "profile_name", ""),
-            )
-            
-            logging.info(f"Data ingestion artifact: {data_ingestion_artifact}")
-            return data_ingestion_artifact
-        except Exception as e:
-            raise MyException(e, sys) from e
+    def initiate_data_ingestion(self) -> DataIngestionArtifact:
+        dataframe = self.export_data_into_feature_store()
+        return DataIngestionArtifact(
+            feature_store_file_path=self.data_ingestion_config.feature_store_file_path,
+            profile_name=getattr(self.data_ingestion_config.training_pipeline_config, "profile_name", ""),
+        )

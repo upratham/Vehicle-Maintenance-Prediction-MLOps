@@ -2,25 +2,53 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from src.constants import *
+from src.constants import (
+    ARTIFACT_DIR,
+    DATA_INGESTION_COLLECTION_NAME,
+    DATA_INGESTION_DIR_NAME,
+    DATA_INGESTION_FEATURE_STORE_DIR,
+    DATA_INGESTION_INGESTED_DIR,
+    DATA_INGESTION_TRAIN_TEST_SPLIT_RATIO,
+    DATA_TRANSFORMATION_DIR_NAME,
+    DATA_TRANSFORMATION_TRANSFORMED_DATA_DIR,
+    DATA_VALIDATION_DIR_NAME,
+    DATA_VALIDATION_REPORT_FILE_NAME,
+    DATABASE_NAME,
+    DROP_FEATURES,
+    FILE_NAME,
+    MODEL_BUCKET_NAME,
+    MODEL_EVALUATION_CHANGED_THRESHOLD_SCORE,
+    MODEL_FILE_NAME,
+    MODEL_PUSHER_S3_KEY,
+    MODEL_TRAINER_DIR_NAME,
+    MODEL_TRAINER_TRAINED_MODEL_DIR,
+    NOMINAL_FEATURES,
+    ORDINAL_FEATURES,
+    PARAM,
+    PIPELINE_NAME,
+    PREPROCESSOR_OBJ_DIR,
+    PREPROCSSING_OBJECT_FILE_NAME,
+    SCHEMA_FILE_PATH,
+    TARGET_COLUMN,
+    TEST_FILE_NAME,
+    TRAIN_FILE_NAME,
+)
 
 
-TIMESTAMP: str = datetime.now().strftime("%m_%d_%Y_%H_%M_%S")
+def _utc_timestamp() -> str:
+    return datetime.now().strftime("%m_%d_%Y_%H_%M_%S")
 
 
 @dataclass
 class TrainingPipelineConfig:
     profile_name: str = "vehicle_maintenance"
     pipeline_name: str = PIPELINE_NAME
-    timestamp: str = TIMESTAMP
+    timestamp: str = field(default_factory=_utc_timestamp)
     artifact_dir: str = ""
 
     def __post_init__(self):
         if not self.artifact_dir:
             self.artifact_dir = os.path.join(ARTIFACT_DIR, self.profile_name, self.timestamp)
-
-
-training_pipeline_config: TrainingPipelineConfig = TrainingPipelineConfig()
 
 
 @dataclass
@@ -35,7 +63,8 @@ class DataIngestionConfig:
     testing_file_path: str = ""
 
     def __post_init__(self):
-        self.data_ingestion_dir = os.path.join(self.training_pipeline_config.artifact_dir, DATA_INGESTION_DIR_NAME)
+        artifact_dir = self.training_pipeline_config.artifact_dir
+        self.data_ingestion_dir = os.path.join(artifact_dir, DATA_INGESTION_DIR_NAME)
         self.feature_store_file_path = os.path.join(
             self.data_ingestion_dir, DATA_INGESTION_FEATURE_STORE_DIR, FILE_NAME
         )
@@ -60,9 +89,9 @@ class DataTransformationConfig:
     training_pipeline_config: TrainingPipelineConfig = field(default_factory=TrainingPipelineConfig)
     schema_file_path: str = SCHEMA_FILE_PATH
     target_column: str = TARGET_COLUMN
-    drop_features: list = field(default_factory=lambda: DROP_FEATURES)
-    nominal_features: list = field(default_factory=lambda: NOMINAL_FEATURES)
-    ordinal_features: dict = field(default_factory=lambda: ORDINAL_FEATURES)
+    drop_features: list = field(default_factory=lambda: list(DROP_FEATURES))
+    nominal_features: list = field(default_factory=lambda: list(NOMINAL_FEATURES))
+    ordinal_features: dict = field(default_factory=lambda: dict(ORDINAL_FEATURES))
     training_distribution_path: str = ""
     data_transformation_dir: str = ""
     transformed_object_file_path: str = ""
@@ -70,13 +99,11 @@ class DataTransformationConfig:
     transformed_test_file_path: str = ""
 
     def __post_init__(self):
-        self.data_transformation_dir = os.path.join(
-            self.training_pipeline_config.artifact_dir, DATA_TRANSFORMATION_DIR_NAME
-        )
+        artifact_dir = self.training_pipeline_config.artifact_dir
+        profile_name = self.training_pipeline_config.profile_name
+        self.data_transformation_dir = os.path.join(artifact_dir, DATA_TRANSFORMATION_DIR_NAME)
         self.transformed_object_file_path = os.path.join(
-            PREPROCESSOR_OBJ_DIR,
-            self.training_pipeline_config.profile_name,
-            PREPROCSSING_OBJECT_FILE_NAME,
+            PREPROCESSOR_OBJ_DIR, profile_name, PREPROCSSING_OBJECT_FILE_NAME
         )
         self.transformed_train_file_path = os.path.join(
             self.data_transformation_dir,
@@ -89,32 +116,25 @@ class DataTransformationConfig:
             TEST_FILE_NAME.replace("csv", "npy"),
         )
         if not self.training_distribution_path:
-            self.training_distribution_path = os.path.join(
-                self.training_pipeline_config.artifact_dir,
-                "training_distribution.json",
-            )
+            self.training_distribution_path = os.path.join(artifact_dir, "training_distribution.json")
 
 
 @dataclass
 class ModelTrainerConfig:
     training_pipeline_config: TrainingPipelineConfig = field(default_factory=TrainingPipelineConfig)
-    model_type: str = "ann"
     target_column: str = TARGET_COLUMN
-    expected_accuracy: float = MODEL_TRAINER_EXPECTED_SCORE
-    model_config_file_path: str = MODEL_TRAINER_MODEL_CONFIG_FILE_PATH
-    params: dict = field(default_factory=lambda: PARAM)
+    params: dict = field(default_factory=lambda: dict(PARAM))
     model_trainer_dir: str = ""
     trained_model_file_path: str = ""
     baselines_file_path: str = ""
 
     def __post_init__(self):
-        self.model_trainer_dir = os.path.join(self.training_pipeline_config.artifact_dir, MODEL_TRAINER_DIR_NAME)
+        artifact_dir = self.training_pipeline_config.artifact_dir
+        self.model_trainer_dir = os.path.join(artifact_dir, MODEL_TRAINER_DIR_NAME)
         self.trained_model_file_path = os.path.join(
-            self.model_trainer_dir,
-            MODEL_TRAINER_TRAINED_MODEL_DIR,
-            MODEL_FILE_NAME,
+            self.model_trainer_dir, MODEL_TRAINER_TRAINED_MODEL_DIR, MODEL_FILE_NAME
         )
-        self.baselines_file_path = os.path.join(self.training_pipeline_config.artifact_dir, "baselines.json")
+        self.baselines_file_path = os.path.join(artifact_dir, "baselines.json")
 
 
 @dataclass
@@ -149,8 +169,7 @@ class ModelPusherConfig:
             ).replace("\\", "/")
         if not self.model_registry_file_path:
             self.model_registry_file_path = os.path.join(
-                self.training_pipeline_config.artifact_dir,
-                "model_registry.json",
+                self.training_pipeline_config.artifact_dir, "model_registry.json"
             )
 
 
