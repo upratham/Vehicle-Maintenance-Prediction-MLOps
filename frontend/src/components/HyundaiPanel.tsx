@@ -11,7 +11,7 @@ export interface HyundaiInputs {
 }
 
 const CONFIG: SensorPanelConfig<HyundaiInputs> = {
-  title: "Hyundai · Sensor Readings",
+  title: "Vehicle · Sensor Readings",
   ranges: HYUNDAI_RANGES,
   rangeKeys: ["engine_temperature", "brake_pad_thickness", "tire_pressure"],
   gridCols: 1,

@@ -19,7 +19,7 @@ type Model = "maintenance" | "hyundai" | "engine";
 
 const MODEL_TABS: { id: Model; label: string; subtitle: string }[] = [
   { id: "maintenance", label: "Vehicle Maintenance", subtitle: "Year/make/model · service forecast" },
-  { id: "hyundai", label: "Hyundai Anomaly", subtitle: "Sensor stream · anomaly detection" },
+  { id: "hyundai", label: "Vehicle Anomaly", subtitle: "Sensor stream · anomaly detection" },
   { id: "engine", label: "Engine Condition", subtitle: "6-sensor engine diagnosis" },
 ];
 
@@ -333,8 +333,8 @@ export default function App() {
             {model === "hyundai" && (
               <div className="space-y-6">
                 <SectionIntro
-                  title="Hyundai sensor stream"
-                  subtitle="Anomaly detection model trained on Hyundai maintenance telemetry."
+                  title="Vehicle sensor stream"
+                  subtitle="Anomaly detection model trained on vehicle maintenance telemetry."
                 />
                 <HyundaiPanel onPredict={runHyundai} predicting={predicting} />
                 <AnomalyResultCard
