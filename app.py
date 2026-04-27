@@ -109,7 +109,7 @@ async def predict_json(payload: PredictPayload):
     }
 
     try:
-        log_prediction(raw_payload, response)
+        log_prediction(raw_payload, response, profile_name="vehicle_maintenance")
     except Exception as log_err:
         logging.warning(f"prediction logging skipped: {log_err}")
 
@@ -127,7 +127,12 @@ class HyundaiCarsPredictPayload(BaseModel):
 async def predict_hyundai(payload: HyundaiCarsPredictPayload):
     """Anomaly-detection prediction for Hyundai cars dataset."""
     data = HyundaiCarsData(**payload.model_dump())
-    return JSONResponse(MultiModelOrchestrator().predict("cars_hyundai", data.get_dataframe()))
+    response = MultiModelOrchestrator().predict("cars_hyundai", data.get_dataframe())
+    try:
+        log_prediction(payload.model_dump(), response, profile_name="cars_hyundai")
+    except Exception as log_err:
+        logging.warning(f"prediction logging skipped: {log_err}")
+    return JSONResponse(response)
 
 
 class EngineDataPredictPayload(BaseModel):
@@ -143,7 +148,12 @@ class EngineDataPredictPayload(BaseModel):
 async def predict_engine(payload: EngineDataPredictPayload):
     """Engine condition prediction for engine_data dataset."""
     data = EngineData(**payload.model_dump())
-    return JSONResponse(MultiModelOrchestrator().predict("engine_data", data.get_dataframe()))
+    response = MultiModelOrchestrator().predict("engine_data", data.get_dataframe())
+    try:
+        log_prediction(payload.model_dump(), response, profile_name="engine_data")
+    except Exception as log_err:
+        logging.warning(f"prediction logging skipped: {log_err}")
+    return JSONResponse(response)
 
 
 def _read_json(path: str) -> Optional[dict]:
@@ -275,8 +285,8 @@ async def model_info_all():
 
 
 @app.get("/drift")
-async def drift_endpoint(window: str = "7d"):
-    return JSONResponse(compute_drift(window=window))
+async def drift_endpoint(window: str = "7d", profile: str = "vehicle_maintenance"):
+    return JSONResponse(compute_drift(window=window, profile_name=profile))
 
 
 @app.exception_handler(Exception)

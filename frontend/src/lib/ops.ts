@@ -69,8 +69,8 @@ export async function fetchAllModelInfo(): Promise<AllModelInfo> {
   return r.json();
 }
 
-export async function fetchDrift(window = "7d"): Promise<DriftReport> {
-  const r = await fetch(`/drift?window=${encodeURIComponent(window)}`);
+export async function fetchDrift(window = "7d", profile = "vehicle_maintenance"): Promise<DriftReport> {
+  const r = await fetch(`/drift?window=${encodeURIComponent(window)}&profile=${encodeURIComponent(profile)}`);
   if (!r.ok) throw new Error(`drift failed (${r.status})`);
   return r.json();
 }

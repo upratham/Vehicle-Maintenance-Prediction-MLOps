@@ -1,9 +1,10 @@
 """Drift monitoring: Population Stability Index + prediction-log store.
 
 Training distribution is persisted once at transformation time
-(artifact/training_distribution.json). Live predictions are appended to a
-MongoDB collection (`prediction_logs`). PSI is computed per feature by
-bucketing the live window against the training histogram.
+(artifact/<profile>/<run>/training_distribution.json). Live predictions are
+appended to a MongoDB collection (`prediction_logs`) tagged with a
+`profile_name` field. PSI is computed per feature by bucketing the live
+window against the training histogram.
 
 All Mongo access is lazy and best-effort — the web app must not fail if
 Mongo is unavailable.
@@ -23,9 +24,8 @@ from src.logger import logging
 PREDICTION_LOG_COLLECTION = "prediction_logs"
 
 
-def _resolve_training_dist_path() -> str:
-    """Find training_distribution.json in the latest pipeline run dir."""
-    pipeline_base = os.path.join("artifact", "vehicle_maintenance")
+def _resolve_training_dist_path(profile_name: str = "vehicle_maintenance") -> str:
+    pipeline_base = os.path.join("artifact", profile_name)
     if os.path.isdir(pipeline_base):
         runs = sorted(
             [d for d in os.listdir(pipeline_base) if os.path.isdir(os.path.join(pipeline_base, d))],
@@ -35,11 +35,11 @@ def _resolve_training_dist_path() -> str:
             candidate = os.path.join(pipeline_base, run, "training_distribution.json")
             if os.path.exists(candidate):
                 return candidate
-    return os.path.join("artifact", "training_distribution.json")
+    return os.path.join("artifact", f"{profile_name}_training_distribution.json")
 
 
-def _load_training_distribution() -> dict[str, Any] | None:
-    path = _resolve_training_dist_path()
+def _load_training_distribution(profile_name: str = "vehicle_maintenance") -> dict[str, Any] | None:
+    path = _resolve_training_dist_path(profile_name)
     if not os.path.exists(path):
         return None
     with open(path) as f:
@@ -62,13 +62,18 @@ def _mongo_collection():
         return None
 
 
-def log_prediction(payload: dict[str, Any], response: dict[str, Any]) -> None:
+def log_prediction(
+    payload: dict[str, Any],
+    response: dict[str, Any],
+    profile_name: str = "vehicle_maintenance",
+) -> None:
     col = _mongo_collection()
     if col is None:
         return
     try:
         col.insert_one({
             "ts": datetime.now(timezone.utc),
+            "profile_name": profile_name,
             "input": payload,
             "score": response.get("score"),
             "label": response.get("label"),
@@ -129,15 +134,39 @@ def _verdict(psi: float) -> str:
     return "drifted"
 
 
-def compute_drift(window: str = "7d") -> dict[str, Any]:
-    """Compute per-feature PSI of the live window vs. training distribution.
+def _demo_rows(training: dict[str, Any]) -> list[dict[str, Any]]:
+    """Generate 120 in-distribution demo rows from the training distribution stats."""
+    rng = np.random.default_rng(42)
+    rows = []
+    for _ in range(120):
+        inp: dict[str, Any] = {}
+        for feat, meta in training.get("numerical", {}).items():
+            mean = float(meta.get("mean", 0))
+            std = float(meta.get("std", max(abs(mean) * 0.1, 1.0)))
+            inp[feat] = round(float(rng.normal(mean, std)), 4)
+        for feat, counts in training.get("categorical", {}).items():
+            categories = list(counts.keys())
+            total = sum(counts.values()) or 1
+            probs = [counts[c] / total for c in categories]
+            inp[feat] = str(rng.choice(categories, p=probs))
+        rows.append({"input": inp})
+    return rows
 
-    Falls back to a synthetic "mildly in-distribution" demo report if Mongo
-    has no logs yet, so the Ops page always renders.
-    """
-    training = _load_training_distribution()
+
+def compute_drift(
+    window: str = "7d",
+    profile_name: str = "vehicle_maintenance",
+) -> dict[str, Any]:
+    """Compute per-feature PSI of the live window vs. training distribution for a profile."""
+    training = _load_training_distribution(profile_name)
     if training is None:
-        return {"window": window, "source": "none", "features": [], "error": "training distribution not found"}
+        return {
+            "window": window,
+            "profile": profile_name,
+            "source": "none",
+            "features": [],
+            "error": "training distribution not found",
+        }
 
     delta = _parse_window(window)
     since = datetime.now(timezone.utc) - delta
@@ -147,15 +176,17 @@ def compute_drift(window: str = "7d") -> dict[str, Any]:
     source = "mongo"
     if col is not None:
         try:
-            rows = list(col.find({"ts": {"$gte": since}}, {"_id": 0, "input": 1}))
+            rows = list(col.find(
+                {"ts": {"$gte": since}, "profile_name": profile_name},
+                {"_id": 0, "input": 1},
+            ))
         except Exception as exc:
             logging.warning(f"prediction_log query failed: {exc}")
             rows = []
 
     if not rows:
         source = "demo"
-        # Seed a demo window so the chart is populated for a fresh deploy.
-        rows = _demo_rows()
+        rows = _demo_rows(training)
 
     features: list[dict[str, Any]] = []
 
@@ -189,31 +220,9 @@ def compute_drift(window: str = "7d") -> dict[str, Any]:
     features.sort(key=lambda f: f["psi"], reverse=True)
     return {
         "window": window,
+        "profile": profile_name,
         "source": source,
         "n_predictions": len(rows),
         "thresholds": {"stable": 0.1, "warning": 0.25},
         "features": features,
     }
-
-
-def _demo_rows() -> list[dict[str, Any]]:
-    """Synthetic in-distribution window used when no live logs exist yet."""
-    rng = np.random.default_rng(42)
-    rows = []
-    for _ in range(120):
-        rows.append({"input": {
-            "Reported_Issues": int(rng.integers(0, 5)),
-            "Vehicle_Age": int(rng.integers(1, 14)),
-            "Engine_Size": round(float(rng.normal(2.4, 0.8)), 2),
-            "Odometer_Reading": int(rng.normal(95_000, 40_000)),
-            "Accident_History": int(rng.integers(0, 3)),
-            "Fuel_Efficiency": round(float(rng.normal(14.0, 3.5)), 2),
-            "Tire_Condition": str(rng.choice(["Worn Out", "Good", "New"], p=[0.3, 0.45, 0.25])),
-            "Brake_Condition": str(rng.choice(["Worn Out", "Good", "New"], p=[0.28, 0.48, 0.24])),
-            "Battery_Status": str(rng.choice(["Weak", "Good", "Strong"], p=[0.3, 0.43, 0.27])),
-            "Vehicle_Model": str(rng.choice(["Car", "SUV", "Truck", "Van", "Bus", "Motorcycle"],
-                                            p=[0.34, 0.22, 0.15, 0.11, 0.10, 0.08])),
-            "Fuel_Type": str(rng.choice(["Petrol", "Diesel", "Electric"], p=[0.58, 0.30, 0.12])),
-            "Transmission_Type": str(rng.choice(["Automatic", "Manual"], p=[0.66, 0.34])),
-        }})
-    return rows

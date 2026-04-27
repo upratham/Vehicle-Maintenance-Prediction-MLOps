@@ -369,10 +369,15 @@ export function Ops() {
 
   const refresh = async () => {
     try { setAllInfo(await fetchAllModelInfo()); } catch { /* noop */ }
-    try { setDrift(await fetchDrift("7d")); } catch { /* noop */ }
+    try { setDrift(await fetchDrift("7d", profile)); } catch { /* noop */ }
   };
 
   useEffect(() => { refresh(); }, []);
+
+  useEffect(() => {
+    setDrift(null);
+    fetchDrift("7d", profile).then(setDrift).catch(() => {});
+  }, [profile]);
 
   const info: ModelInfo | null = allInfo?.[profile] ?? null;
 
