@@ -1,8 +1,10 @@
 import os
+import pickle
 
 import numpy as np
 from pandas import DataFrame
 
+from src.cloud_storage.aws_storage import SimpleStorageService
 from src.constants import (
     MODEL_BUCKET_NAME,
     MODEL_FILE_NAME,
@@ -11,17 +13,34 @@ from src.constants import (
     PREPROCSSING_OBJECT_FILE_NAME,
 )
 from src.entity.s3_estimator import Proj1Estimator
+from src.logger import logging
 from src.utils.main_utils import load_object
 
 
-def _preprocessor_path(profile_name: str) -> str:
-    path = os.path.join(PREPROCESSOR_OBJ_DIR, profile_name, PREPROCSSING_OBJECT_FILE_NAME)
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"No preprocessor for profile '{profile_name}' at: {path}. "
-            "Run the training pipeline first."
-        )
-    return path
+def _s3_preprocessor_key(profile_name: str) -> str:
+    return f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{PREPROCSSING_OBJECT_FILE_NAME}".replace("\\", "/")
+
+
+def _local_preprocessor_path(profile_name: str) -> str:
+    return os.path.join(PREPROCESSOR_OBJ_DIR, profile_name, PREPROCSSING_OBJECT_FILE_NAME)
+
+
+def _load_preprocessor(profile_name: str):
+    """Prefer the S3 preprocessor that was paired with the live model; fall back to the
+    image-bundled one. Without this, a model retrained with a different feature set is
+    silently mismatched against the stale preprocessor baked into the deployed image."""
+    try:
+        s3 = SimpleStorageService()
+        obj = s3.s3_resource.Object(MODEL_BUCKET_NAME, _s3_preprocessor_key(profile_name)).get()
+        return pickle.loads(obj["Body"].read())
+    except Exception as exc:
+        logging.warning(f"S3 preprocessor unavailable for '{profile_name}' ({exc}); using local file.")
+        path = _local_preprocessor_path(profile_name)
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"No preprocessor for profile '{profile_name}' in S3 or at {path}."
+            )
+        return load_object(path)
 
 
 def _s3_model_key(profile_name: str) -> str:
@@ -47,7 +66,7 @@ class ProfileClassifier:
         self.profile_name = profile_name
 
     def predict(self, dataframe: DataFrame) -> np.ndarray:
-        preprocessor = load_object(_preprocessor_path(self.profile_name))
+        preprocessor = _load_preprocessor(self.profile_name)
         X = preprocessor.transform(dataframe)
         estimator = Proj1Estimator(
             bucket_name=MODEL_BUCKET_NAME,
