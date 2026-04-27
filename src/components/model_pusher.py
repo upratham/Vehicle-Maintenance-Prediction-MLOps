@@ -112,6 +112,24 @@ class ModelPusher:
                 profile_name=self.model_pusher_config.training_pipeline_config.profile_name,
                 manifest=manifest,
             )
+
+            # Upload manifest + baselines to stable S3 key co-located with the model
+            # so the Ops console can always find them even when artifact runs are pruned
+            stable_prefix = self.model_pusher_config.s3_model_key_path.rsplit("/", 1)[0]
+            bucket = self.model_pusher_config.bucket_name
+            self.s3.s3_resource.Object(bucket, f"{stable_prefix}/model_registry.json").put(
+                Body=json.dumps(manifest, indent=2).encode()
+            )
+            logging.info(f"Uploaded manifest -> s3://{bucket}/{stable_prefix}/model_registry.json")
+
+            baselines_path = os.path.join(
+                self.model_pusher_config.training_pipeline_config.artifact_dir, "baselines.json"
+            )
+            if os.path.exists(baselines_path):
+                with open(baselines_path, "rb") as bf:
+                    self.s3.s3_resource.Object(bucket, f"{stable_prefix}/baselines.json").put(Body=bf.read())
+                logging.info(f"Uploaded baselines -> s3://{bucket}/{stable_prefix}/baselines.json")
+
         except Exception as reg_err:
             logging.warning(f"model_registry write skipped: {reg_err}")
 

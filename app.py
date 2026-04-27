@@ -176,18 +176,38 @@ def _resolve_profile_artifact(profile_name: str, filename: str) -> str:
 
 
 def _load_json_from_s3(profile_name: str, filename: str) -> Optional[dict]:
-    """Download and parse a JSON artifact file from the latest S3 run for profile_name."""
+    """Download and parse a JSON artifact file for profile_name from S3.
+
+    Priority:
+      1. Stable key co-located with the production model (written on every accepted push,
+         survives artifact pruning, always reflects the live promoted model).
+      2. Newest timestamped artifact run that actually contains the file (walks newest→oldest
+         so a run where the model was rejected doesn't block older accepted data).
+    """
     try:
         from src.cloud_storage.aws_storage import SimpleStorageService
-        from src.constants import MODEL_BUCKET_NAME, ARTIFACT_S3_PREFIX
+        from src.constants import MODEL_BUCKET_NAME, ARTIFACT_S3_PREFIX, MODEL_PUSHER_S3_KEY
         s3 = SimpleStorageService()
+
+        # 1. Stable key — model-registry/<profile>/<filename>
+        try:
+            stable_key = f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{filename}"
+            body = s3.s3_resource.Object(MODEL_BUCKET_NAME, stable_key).get()["Body"].read().decode()
+            return json.loads(body)
+        except Exception:
+            pass  # not there yet (no accepted push for this profile), fall through
+
+        # 2. Timestamped artifact runs, newest first
         runs = s3.list_run_prefixes(MODEL_BUCKET_NAME, f"{ARTIFACT_S3_PREFIX}/{profile_name}")
-        if not runs:
-            return None
-        # list_run_prefixes returns sorted oldest→newest; take the last entry
-        key = f"{runs[-1]}{filename}"
-        body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
-        return json.loads(body)
+        for run_prefix in reversed(runs):
+            try:
+                key = f"{run_prefix}{filename}"
+                body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
+                return json.loads(body)
+            except Exception:
+                continue  # file absent in this run (model not accepted), try older run
+
+        return None
     except Exception as exc:
         logging.warning(f"S3 artifact fetch failed [{profile_name}/{filename}]: {exc}")
         return None
