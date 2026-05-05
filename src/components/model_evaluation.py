@@ -41,10 +41,14 @@ class ModelEvaluation:
         """Return the deployed S3 model if present, else None."""
         bucket_name = self.model_eval_config.bucket_name
         model_path = self.model_eval_config.s3_model_key_path
-        proj1_estimator = Proj1Estimator(bucket_name=bucket_name, model_path=model_path)
-        if proj1_estimator.is_model_present(model_path=model_path):
-            return proj1_estimator
-        return None
+        try:
+            proj1_estimator = Proj1Estimator(bucket_name=bucket_name, model_path=model_path)
+            if proj1_estimator.is_model_present(model_path=model_path):
+                return proj1_estimator
+            return None
+        except Exception as err:
+            logging.warning(f"S3 disabled (no creds or unreachable): {err}")
+            return None
 
     def evaluate_model(self) -> EvaluateModelResponse:
         test_arr = load_numpy_array_data(file_path=self.data_transformation_artifact.transformed_test_file_path)
