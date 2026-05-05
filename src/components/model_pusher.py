@@ -97,17 +97,28 @@ def write_model_registry(
 class ModelPusher:
     def __init__(self, model_evaluation_artifact: ModelEvaluationArtifact,
                  model_pusher_config: ModelPusherConfig):
-        self.s3 = SimpleStorageService()
         self.model_evaluation_artifact = model_evaluation_artifact
         self.model_pusher_config = model_pusher_config
-        self.proj1_estimator = Proj1Estimator(
-            bucket_name=model_pusher_config.bucket_name,
-            model_path=model_pusher_config.s3_model_key_path,
-        )
+        try:
+            self.s3 = SimpleStorageService()
+            self.proj1_estimator = Proj1Estimator(
+                bucket_name=model_pusher_config.bucket_name,
+                model_path=model_pusher_config.s3_model_key_path,
+            )
+        except Exception as e:
+            logging.warning(f"S3 disabled (no creds): {e}")
+            self.s3 = None
+            self.proj1_estimator = None
 
     def initiate_model_pusher(self) -> ModelPusherArtifact:
-        logging.info("Uploading new model to S3 bucket")
-        self.proj1_estimator.save_model(from_file=self.model_evaluation_artifact.trained_model_path)
+        if self.proj1_estimator is not None:
+            try:
+                logging.info("Uploading new model to S3 bucket")
+                self.proj1_estimator.save_model(from_file=self.model_evaluation_artifact.trained_model_path)
+            except Exception as e:
+                logging.warning(f"S3 model upload skipped: {e}")
+        else:
+            logging.info("S3 not configured; keeping model local only")
         model_pusher_artifact = ModelPusherArtifact(
             bucket_name=self.model_pusher_config.bucket_name,
             s3_model_path=self.model_pusher_config.s3_model_key_path,
@@ -133,41 +144,33 @@ class ModelPusher:
                 manifest=manifest,
             )
 
-            # Upload manifest + baselines to stable S3 key co-located with the model
-            # so the Ops console can always find them even when artifact runs are pruned
-            stable_prefix = self.model_pusher_config.s3_model_key_path.rsplit("/", 1)[0]
-            bucket = self.model_pusher_config.bucket_name
-            self.s3.s3_resource.Object(bucket, f"{stable_prefix}/model_registry.json").put(
-                Body=json.dumps(manifest, indent=2).encode()
-            )
-            logging.info(f"Uploaded manifest -> s3://{bucket}/{stable_prefix}/model_registry.json")
+            if self.s3 is not None:
+                stable_prefix = self.model_pusher_config.s3_model_key_path.rsplit("/", 1)[0]
+                bucket = self.model_pusher_config.bucket_name
+                self.s3.s3_resource.Object(bucket, f"{stable_prefix}/model_registry.json").put(
+                    Body=json.dumps(manifest, indent=2).encode()
+                )
+                baselines_path = os.path.join(
+                    self.model_pusher_config.training_pipeline_config.artifact_dir, "baselines.json"
+                )
+                if os.path.exists(baselines_path):
+                    with open(baselines_path, "rb") as bf:
+                        self.s3.s3_resource.Object(bucket, f"{stable_prefix}/baselines.json").put(Body=bf.read())
 
-            baselines_path = os.path.join(
-                self.model_pusher_config.training_pipeline_config.artifact_dir, "baselines.json"
-            )
-            if os.path.exists(baselines_path):
-                with open(baselines_path, "rb") as bf:
-                    self.s3.s3_resource.Object(bucket, f"{stable_prefix}/baselines.json").put(Body=bf.read())
-                logging.info(f"Uploaded baselines -> s3://{bucket}/{stable_prefix}/baselines.json")
-
-            # Upload training_distribution.json so drift PSI works in production
-            from src.pipeline.training_pipeline import TrainingPipelineConfig
-            artifact_dir = self.model_pusher_config.training_pipeline_config.artifact_dir
-            profile_name = self.model_pusher_config.training_pipeline_config.profile_name
-            td_path = os.path.join(artifact_dir, "training_distribution.json")
-            if not os.path.exists(td_path):
-                # walk the profile artifact dir for the file
-                profile_base = os.path.join("artifact", profile_name)
-                if os.path.isdir(profile_base):
-                    for run in sorted(os.listdir(profile_base), reverse=True):
-                        candidate = os.path.join(profile_base, run, "training_distribution.json")
-                        if os.path.exists(candidate):
-                            td_path = candidate
-                            break
-            if os.path.exists(td_path):
-                with open(td_path, "rb") as tf:
-                    self.s3.s3_resource.Object(bucket, f"{stable_prefix}/training_distribution.json").put(Body=tf.read())
-                logging.info(f"Uploaded training_distribution -> s3://{bucket}/{stable_prefix}/training_distribution.json")
+                artifact_dir = self.model_pusher_config.training_pipeline_config.artifact_dir
+                profile_name = self.model_pusher_config.training_pipeline_config.profile_name
+                td_path = os.path.join(artifact_dir, "training_distribution.json")
+                if not os.path.exists(td_path):
+                    profile_base = os.path.join("artifact", profile_name)
+                    if os.path.isdir(profile_base):
+                        for run in sorted(os.listdir(profile_base), reverse=True):
+                            candidate = os.path.join(profile_base, run, "training_distribution.json")
+                            if os.path.exists(candidate):
+                                td_path = candidate
+                                break
+                if os.path.exists(td_path):
+                    with open(td_path, "rb") as tf:
+                        self.s3.s3_resource.Object(bucket, f"{stable_prefix}/training_distribution.json").put(Body=tf.read())
 
         except Exception as reg_err:
             logging.warning(f"model_registry write skipped: {reg_err}")

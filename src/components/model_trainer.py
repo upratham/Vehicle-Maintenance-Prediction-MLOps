@@ -126,8 +126,6 @@ def _train_baselines(X_train, y_train, X_test, y_test, primary_metrics: dict, ou
 
 
 class BaseModelTrainer(ABC):
-    """Shared training flow; subclasses implement `run_hpo` with dataset-specific search spaces."""
-
     PROFILE_NAME: str = ""
 
     def __init__(
@@ -138,18 +136,26 @@ class BaseModelTrainer(ABC):
         self.data_transformation_artifact = data_transformation_artifact
         self.model_trainer_config = model_trainer_config
 
-    def _init_clearml_task(self) -> Tuple[Task, Logger]:
+    def _init_clearml_task(self):
         profile = self.model_trainer_config.training_pipeline_config.profile_name
-        task = Task.init(
-            project_name=CLEARML_PROJECT,
-            task_name=f"{profile} HPO Training",
-            task_type=Task.TaskTypes.optimizer,
-            reuse_last_task_id=False,
-        )
-        task.connect({"profile_name": profile})
-        logger = Logger.current_logger()
-        logging.info(f"ClearML task initialised for profile={profile}.")
-        return task, logger
+        try:
+            task = Task.init(
+                project_name=CLEARML_PROJECT,
+                task_name=f"{profile} HPO Training",
+                task_type=Task.TaskTypes.optimizer,
+                reuse_last_task_id=False,
+            )
+            task.connect({"profile_name": profile})
+            return task, Logger.current_logger()
+        except Exception as e:
+            logging.warning(f"ClearML disabled (no creds or unreachable): {e}")
+            class _NoTask:
+                def connect(self, *a, **k): pass
+                def upload_artifact(self, *a, **k): pass
+                def close(self, *a, **k): pass
+            class _NoLogger:
+                def report_scalar(self, *a, **k): pass
+            return _NoTask(), _NoLogger()
 
     def _log_trial(self, logger: Logger, trial_number: int, cv_f1: float, series: str = "trial") -> None:
         """Log each Optuna trial F1 to ClearML so HPO progress is visible."""
@@ -252,16 +258,7 @@ class BaseModelTrainer(ABC):
         )
 
 
-# ---------------------------------------------------------------------------
-# Dataset-specific trainers
-# ---------------------------------------------------------------------------
-
 class VehicleMaintenanceModelTrainer(BaseModelTrainer):
-    """
-    Random-Forest HPO for the vehicle-maintenance dataset.
-    Search space targets recall/F1 for the maintenance-needed class.
-    """
-
     PROFILE_NAME = "vehicle_maintenance"
 
     def run_hpo(
@@ -314,11 +311,6 @@ class VehicleMaintenanceModelTrainer(BaseModelTrainer):
 
 
 class HyundaiCarsModelTrainer(BaseModelTrainer):
-    """
-    Compare Random Forest and SVM via Optuna HPO for the Hyundai maintenance-type dataset.
-    The winner is selected by weighted multiclass F1.
-    """
-
     PROFILE_NAME = "cars_hyundai"
 
     def run_hpo(
@@ -426,11 +418,6 @@ class HyundaiCarsModelTrainer(BaseModelTrainer):
 
 
 class EngineDataModelTrainer(BaseModelTrainer):
-    """
-    Random-Forest HPO for the engine-condition dataset.
-    Extends the estimator and depth ranges to handle the richer numeric feature space.
-    """
-
     PROFILE_NAME = "engine_data"
 
     def run_hpo(
@@ -482,16 +469,7 @@ class EngineDataModelTrainer(BaseModelTrainer):
         return model, best, "ensemble-bagging-hpo"
 
 
-# ---------------------------------------------------------------------------
-# Dispatcher
-# ---------------------------------------------------------------------------
-
 class ModelTrainer:
-    """
-    Factory that returns the correct dataset-specific trainer.
-    Mirrors the DataTransformation dispatcher pattern.
-    """
-
     PROFILE_CLASS_MAP = {
         "vehicle_maintenance": VehicleMaintenanceModelTrainer,
         "cars_hyundai":        HyundaiCarsModelTrainer,
