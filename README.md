@@ -4,16 +4,25 @@ MSML 605 final project. FastAPI + React app, three vehicle-health models.
 
 ## How to run
 
-You'll need Python 3.12 and Node 20+. Open a terminal, cd into the project
-folder, and run the script for your OS:
+You'll need Python 3.12 and Node 20+. Open a terminal and run:
+
+**macOS / Linux**
 
 ```
-~/Vehicle-Maintenance-Prediction-MLOps $ bash .dev/dev.sh
+git clone https://github.com/upratham/Vehicle-Maintenance-Prediction-MLOps
+cd Vehicle-Maintenance-Prediction-MLOps
+bash .dev/dev.sh
 ```
 
+**Windows (PowerShell)**
+
 ```
-PS C:\Users\you\Vehicle-Maintenance-Prediction-MLOps> .\.dev\dev.ps1
+git clone https://github.com/upratham/Vehicle-Maintenance-Prediction-MLOps
+cd Vehicle-Maintenance-Prediction-MLOps
+.\.dev\dev.ps1
 ```
+
+Then wait.
 
 That's it. The script makes a venv, installs deps, trains the three models
 from the CSVs in `data/`, builds the frontend, and starts the backend on
