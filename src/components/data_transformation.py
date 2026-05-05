@@ -25,8 +25,7 @@ from src.utils.main_utils import read_yaml_file, save_numpy_array_data, save_obj
 logging.getLogger("matplotlib.font_manager").setLevel(logging.WARNING)
 
 
-def _write_training_distribution(raw_df: pd.DataFrame, schema: dict, output_path: str) -> None:
-    """Persist a snapshot of training feature distributions for later drift checks."""
+def _write_training_distribution(raw_df, schema, output_path):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     target = schema.get("target_column")
@@ -65,8 +64,6 @@ def _write_training_distribution(raw_df: pd.DataFrame, schema: dict, output_path
 
 
 class BaseDataTransformation:
-    """Shared transformation flow with dataset-specific extension points."""
-
     def __init__(
         self,
         data_ingestion_artifact: DataIngestionArtifact,
@@ -269,8 +266,6 @@ class BaseDataTransformation:
 
 
 class VehicleMaintenanceDataTransformation(BaseDataTransformation):
-    """Vehicle-maintenance dataset transformation with richer feature selection."""
-
     def drop_not_important_features(self, df: pd.DataFrame) -> pd.DataFrame:
         logging.info("Dropping configured vehicle-maintenance features")
         features_to_drop = [
@@ -402,8 +397,6 @@ class VehicleMaintenanceDataTransformation(BaseDataTransformation):
 
 
 class HyundaiCarsDataTransformation(BaseDataTransformation):
-    """Minimal schema-driven preprocessing for the Hyundai dataset."""
-
     def encode_target(self, y_train: pd.Series, y_test: pd.Series) -> tuple[pd.Series, pd.Series]:
         logging.info("Encoding Hyundai maintenance-type target labels")
         label_encoder = LabelEncoder()
@@ -459,8 +452,6 @@ class HyundaiCarsDataTransformation(BaseDataTransformation):
 
 
 class EngineDataTransformation(BaseDataTransformation):
-    """Numeric-only preprocessing for engine condition data."""
-
     def build_preprocessor(self, X_train: pd.DataFrame) -> ColumnTransformer:
         logging.info("Building engine-data preprocessor")
         numerical_features = self._get_schema_numerical_columns(X_train)
@@ -476,8 +467,6 @@ class EngineDataTransformation(BaseDataTransformation):
 
 
 class DataTransformation:
-    """Compatibility dispatcher that returns the right dataset-specific transformer."""
-
     PROFILE_CLASS_MAP = {
         "vehicle_maintenance": VehicleMaintenanceDataTransformation,
         "cars_hyundai": HyundaiCarsDataTransformation,

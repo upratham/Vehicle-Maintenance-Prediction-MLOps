@@ -1,13 +1,3 @@
-"""Rule-based cost estimation and feature-impact explanation.
-
-Kept deliberately simple and deterministic so the demo is reliable:
-  - Cost/hours are looked up from the MongoDB `repair_costs` collection.
-  - Falls back to hardcoded data if MongoDB is unreachable.
-  - Feature impact is a heuristic "contribution score" computed from the user's
-    inputs; it mirrors what a SHAP plot would show but has no external deps and
-    can't fail at demo time.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -47,9 +37,9 @@ class ServiceEstimate:
 
 @dataclass
 class FeatureImpact:
-    feature: str        # display label
-    value: Any          # user's entered value
-    contribution: float # signed score in ~[-1, 1]; positive = pushes toward "maintenance"
+    feature: str
+    value: Any
+    contribution: float
 
 
 def _rows_to_dict(rows: list[dict]) -> dict[str, ServiceEstimate]:
@@ -69,28 +59,23 @@ def _rows_to_dict(rows: list[dict]) -> dict[str, ServiceEstimate]:
 _costs_cache: dict[str, ServiceEstimate] | None = None
 
 
-def _load_costs() -> dict[str, ServiceEstimate]:
-    """Load repair-cost rows from MongoDB once, falling back to the hardcoded table."""
+def _load_costs():
     global _costs_cache
     if _costs_cache is not None:
         return _costs_cache
     try:
         from src.configuration.mongo_db_connection import MongoDBClient
-        client = MongoDBClient()
-        docs = list(client.database[_REPAIR_COSTS_COLLECTION].find({}, {"_id": 0}))
+        docs = list(MongoDBClient().database[_REPAIR_COSTS_COLLECTION].find({}, {"_id": 0}))
         if docs:
-            logging.info(f"Loaded {len(docs)} repair cost rows from MongoDB.")
             _costs_cache = _rows_to_dict(docs)
             return _costs_cache
-        logging.warning("repair_costs collection is empty, using hardcoded fallback.")
     except Exception as e:
-        logging.warning(f"MongoDB repair_costs fetch failed: {e} — using hardcoded fallback.")
+        logging.warning(f"repair_costs from mongo failed, using hardcoded: {e}")
     _costs_cache = _rows_to_dict(_HARDCODED_COSTS)
     return _costs_cache
 
 
-def pick_service(inputs: dict[str, Any], prob: float) -> ServiceEstimate:
-    """Pick the most relevant service row given the inputs and prediction score."""
+def pick_service(inputs, prob):
     costs = _load_costs()
     brake = (inputs.get("Brake_Condition") or "").lower()
     tire = (inputs.get("Tire_Condition") or "").lower()
@@ -106,7 +91,6 @@ def pick_service(inputs: dict[str, Any], prob: float) -> ServiceEstimate:
     if odo > 150000: flags.append("high_mileage_trans")
     if age > 10: flags.append("engine_age")
 
-    # If multiple things are wrong, recommend a full inspection.
     if len(flags) >= 3 and "multiple_flags" in costs:
         return costs["multiple_flags"]
     if "brake_worn" in flags and "engine_age" in flags and "brake_worn_severe" in costs:
@@ -116,16 +100,12 @@ def pick_service(inputs: dict[str, Any], prob: float) -> ServiceEstimate:
     for f in flags:
         if f in costs:
             return costs[f]
-    # No clear red flag but model still predicts maintenance → routine service.
     if prob >= 0.5 and "high_mileage_routine" in costs:
         return costs["high_mileage_routine"]
     return costs.get("default", next(iter(costs.values())))
 
 
-# Weight table: each rule maps an input condition to a contribution score.
-# Scores are tuned so a typical "heavy maintenance" profile sums near +1.0
-# and a healthy profile sits near 0.
-def feature_impacts(inputs: dict[str, Any]) -> list[FeatureImpact]:
+def feature_impacts(inputs):
     out: list[FeatureImpact] = []
 
     brake = (inputs.get("Brake_Condition") or "").strip()
@@ -146,7 +126,6 @@ def feature_impacts(inputs: dict[str, Any]) -> list[FeatureImpact]:
     bat_score = {"Weak": 0.22, "Good": -0.03, "Strong": -0.15}.get(battery, 0.0)
     out.append(FeatureImpact("Battery Status", battery, bat_score))
 
-    # Odometer: normalize around 100k km as "typical mid-life"
     odo_score = max(-0.2, min(0.32, (odo - 100_000) / 200_000))
     out.append(FeatureImpact("Odometer Reading", f"{int(odo):,} km", odo_score))
 
@@ -159,11 +138,9 @@ def feature_impacts(inputs: dict[str, Any]) -> list[FeatureImpact]:
     acc_score = min(0.18, accidents * 0.07)
     out.append(FeatureImpact("Accident History", accidents, acc_score))
 
-    # Lower mpg → worse; use a typical 14 km/l reference
     if mpg > 0:
         mpg_score = max(-0.12, min(0.14, (14 - mpg) * 0.02))
         out.append(FeatureImpact("Fuel Efficiency", f"{mpg:.1f} km/l", mpg_score))
 
-    # Sort so the most influential (by magnitude) comes first
     out.sort(key=lambda f: abs(f.contribution), reverse=True)
     return out

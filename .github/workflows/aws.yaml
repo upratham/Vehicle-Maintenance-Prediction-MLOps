@@ -1,8 +1,7 @@
 name: Deploy Application to EC2
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   # ── Build & push both images to ECR ──────────────────────────────────────

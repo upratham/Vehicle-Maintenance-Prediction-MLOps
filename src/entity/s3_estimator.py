@@ -5,8 +5,6 @@ from src.logger import logging
 
 
 class Proj1Estimator:
-    """Persist and load a model artifact in S3, with on-demand load and a small cache."""
-
     def __init__(self, bucket_name: str, model_path: str):
         self.bucket_name = bucket_name
         self.model_path = model_path

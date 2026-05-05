@@ -1,15 +1,3 @@
-"""Drift monitoring: Population Stability Index + prediction-log store.
-
-Training distribution is persisted once at transformation time
-(artifact/<profile>/<run>/training_distribution.json). Live predictions are
-appended to a MongoDB collection (`prediction_logs`) tagged with a
-`profile_name` field. PSI is computed per feature by bucketing the live
-window against the training histogram.
-
-All Mongo access is lazy and best-effort — the web app must not fail if
-Mongo is unavailable.
-"""
-
 from __future__ import annotations
 
 import json
@@ -24,73 +12,38 @@ from src.logger import logging
 PREDICTION_LOG_COLLECTION = "prediction_logs"
 
 
-def _resolve_training_dist_path(profile_name: str = "vehicle_maintenance") -> str:
-    pipeline_base = os.path.join("artifact", profile_name)
-    if os.path.isdir(pipeline_base):
-        runs = sorted(
-            [d for d in os.listdir(pipeline_base) if os.path.isdir(os.path.join(pipeline_base, d))],
-            reverse=True,
-        )
+def _load_training_distribution(profile_name="vehicle_maintenance"):
+    base = os.path.join("artifact", profile_name)
+    if os.path.isdir(base):
+        runs = sorted(os.listdir(base), reverse=True)
         for run in runs:
-            candidate = os.path.join(pipeline_base, run, "training_distribution.json")
-            if os.path.exists(candidate):
-                return candidate
-    return os.path.join("artifact", f"{profile_name}_training_distribution.json")
+            p = os.path.join(base, run, "training_distribution.json")
+            if os.path.exists(p):
+                with open(p) as f:
+                    return json.load(f)
 
-
-def _load_training_distribution_from_s3(profile_name: str) -> dict[str, Any] | None:
     try:
         from src.cloud_storage.aws_storage import SimpleStorageService
-        from src.constants import MODEL_BUCKET_NAME, ARTIFACT_S3_PREFIX, MODEL_PUSHER_S3_KEY
+        from src.constants import MODEL_BUCKET_NAME, MODEL_PUSHER_S3_KEY
         s3 = SimpleStorageService()
-
-        # 1. Stable key (uploaded by model_pusher alongside model)
-        try:
-            key = f"{MODEL_PUSHER_S3_KEY}/{profile_name}/training_distribution.json"
-            body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
-            return json.loads(body)
-        except Exception:
-            pass
-
-        # 2. Newest timestamped artifact run that has the file
-        runs = s3.list_run_prefixes(MODEL_BUCKET_NAME, f"{ARTIFACT_S3_PREFIX}/{profile_name}")
-        for run_prefix in reversed(runs):
-            try:
-                key = f"{run_prefix}training_distribution.json"
-                body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
-                return json.loads(body)
-            except Exception:
-                continue
+        key = f"{MODEL_PUSHER_S3_KEY}/{profile_name}/training_distribution.json"
+        body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
+        return json.loads(body)
+    except Exception as e:
+        logging.warning(f"training distribution not found for {profile_name}: {e}")
         return None
-    except Exception as exc:
-        logging.warning(f"S3 training_distribution fetch failed [{profile_name}]: {exc}")
-        return None
-
-
-def _load_training_distribution(profile_name: str = "vehicle_maintenance") -> dict[str, Any] | None:
-    # 1. Local filesystem (dev / after a local training run)
-    path = _resolve_training_dist_path(profile_name)
-    if os.path.exists(path):
-        with open(path) as f:
-            return json.load(f)
-
-    # 2. S3 (production — artifact dir doesn't exist in container)
-    return _load_training_distribution_from_s3(profile_name)
 
 
 def _mongo_collection():
-    """Return the prediction-log collection or None if Mongo isn't reachable."""
     try:
         from pymongo import MongoClient
-
         url = os.getenv("CONNECTION_URL")
         db_name = os.getenv("DB_USERNAME") or "vehicle_maintenance"
         if not url:
             return None
-        client = MongoClient(url, serverSelectionTimeoutMS=1500)
-        return client[db_name][PREDICTION_LOG_COLLECTION]
-    except Exception as exc:
-        logging.warning(f"Mongo unavailable for drift logging: {exc}")
+        return MongoClient(url, serverSelectionTimeoutMS=1500)[db_name][PREDICTION_LOG_COLLECTION]
+    except Exception as e:
+        logging.warning(f"mongo unavailable: {e}")
         return None
 
 
@@ -166,8 +119,7 @@ def _verdict(psi: float) -> str:
     return "drifted"
 
 
-def _demo_rows(training: dict[str, Any]) -> list[dict[str, Any]]:
-    """Generate 120 in-distribution demo rows from the training distribution stats."""
+def _demo_rows(training):
     rng = np.random.default_rng(42)
     rows = []
     for _ in range(120):
@@ -185,11 +137,7 @@ def _demo_rows(training: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def compute_drift(
-    window: str = "7d",
-    profile_name: str = "vehicle_maintenance",
-) -> dict[str, Any]:
-    """Compute per-feature PSI of the live window vs. training distribution for a profile."""
+def compute_drift(window="7d", profile_name="vehicle_maintenance"):
     training = _load_training_distribution(profile_name)
     if training is None:
         return {

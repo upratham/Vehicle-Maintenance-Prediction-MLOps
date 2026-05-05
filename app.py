@@ -22,9 +22,9 @@ from src.logger import logging
 from src.pipeline.prediction_pipeline import (
     EngineData,
     HyundaiCarsData,
-    MultiModelOrchestrator,
     ProfileClassifier,
-    VehicleData,
+    VehicleMaintenanceData,
+    predict_profile,
 )
 from src.pipeline.training_pipeline import TrainPipeline
 
@@ -32,8 +32,6 @@ from src.pipeline.training_pipeline import TrainPipeline
 MODEL_REGISTRY_PATH = os.path.join("artifact", "model_registry.json")
 BASELINES_PATH = os.path.join("artifact", "baselines.json")
 
-# React SPA bundle (built into frontend/dist by the Dockerfile multi-stage build,
-# or by `npm run build` locally). Falls back to None when not yet built.
 SPA_DIST_DIR = os.path.join("frontend", "dist")
 SPA_INDEX = os.path.join(SPA_DIST_DIR, "index.html")
 SPA_ASSETS = os.path.join(SPA_DIST_DIR, "assets")
@@ -69,10 +67,9 @@ class PredictPayload(BaseModel):
 
 @app.post("/predict")
 async def predict_json(payload: PredictPayload):
-    """JSON prediction endpoint consumed by the React frontend."""
-    vehicle_data = VehicleData(**payload.model_dump())
+    vehicle_data = VehicleMaintenanceData(**payload.model_dump())
     classifier = ProfileClassifier("vehicle_maintenance")
-    raw = classifier.predict(dataframe=vehicle_data.get_vehicle_input_data_frame())[0]
+    raw = classifier.predict(dataframe=vehicle_data.get_dataframe())[0]
     score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
     value = 1 if score >= 0.5 else 0
     status = classifier.label(value)
@@ -108,11 +105,7 @@ async def predict_json(payload: PredictPayload):
         ],
     }
 
-    try:
-        log_prediction(raw_payload, response, profile_name="vehicle_maintenance")
-    except Exception as log_err:
-        logging.warning(f"prediction logging skipped: {log_err}")
-
+    log_prediction(raw_payload, response, profile_name="vehicle_maintenance")
     return JSONResponse(response)
 
 
@@ -125,13 +118,9 @@ class HyundaiCarsPredictPayload(BaseModel):
 
 @app.post("/predict/hyundai")
 async def predict_hyundai(payload: HyundaiCarsPredictPayload):
-    """Anomaly-detection prediction for Hyundai cars dataset."""
     data = HyundaiCarsData(**payload.model_dump())
-    response = MultiModelOrchestrator().predict("cars_hyundai", data.get_dataframe())
-    try:
-        log_prediction(payload.model_dump(), response, profile_name="cars_hyundai")
-    except Exception as log_err:
-        logging.warning(f"prediction logging skipped: {log_err}")
+    response = predict_profile("cars_hyundai", data.get_dataframe())
+    log_prediction(payload.model_dump(), response, profile_name="cars_hyundai")
     return JSONResponse(response)
 
 
@@ -146,13 +135,9 @@ class EngineDataPredictPayload(BaseModel):
 
 @app.post("/predict/engine")
 async def predict_engine(payload: EngineDataPredictPayload):
-    """Engine condition prediction for engine_data dataset."""
     data = EngineData(**payload.model_dump())
-    response = MultiModelOrchestrator().predict("engine_data", data.get_dataframe())
-    try:
-        log_prediction(payload.model_dump(), response, profile_name="engine_data")
-    except Exception as log_err:
-        logging.warning(f"prediction logging skipped: {log_err}")
+    response = predict_profile("engine_data", data.get_dataframe())
+    log_prediction(payload.model_dump(), response, profile_name="engine_data")
     return JSONResponse(response)
 
 
@@ -170,8 +155,7 @@ def _read_json(path: str) -> Optional[dict]:
 PROFILE_NAMES = ("vehicle_maintenance", "cars_hyundai", "engine_data")
 
 
-def _resolve_profile_artifact(profile_name: str, filename: str) -> str:
-    """Find filename in the latest timestamped pipeline run dir for the given profile."""
+def _resolve_profile_artifact(profile_name, filename):
     pipeline_base = os.path.join("artifact", profile_name)
     if os.path.isdir(pipeline_base):
         runs = sorted(
@@ -185,29 +169,19 @@ def _resolve_profile_artifact(profile_name: str, filename: str) -> str:
     return os.path.join("artifact", filename)
 
 
-def _load_json_from_s3(profile_name: str, filename: str) -> Optional[dict]:
-    """Download and parse a JSON artifact file for profile_name from S3.
-
-    Priority:
-      1. Stable key co-located with the production model (written on every accepted push,
-         survives artifact pruning, always reflects the live promoted model).
-      2. Newest timestamped artifact run that actually contains the file (walks newest→oldest
-         so a run where the model was rejected doesn't block older accepted data).
-    """
+def _load_json_from_s3(profile_name, filename):
     try:
         from src.cloud_storage.aws_storage import SimpleStorageService
         from src.constants import MODEL_BUCKET_NAME, ARTIFACT_S3_PREFIX, MODEL_PUSHER_S3_KEY
         s3 = SimpleStorageService()
 
-        # 1. Stable key — model-registry/<profile>/<filename>
         try:
-            stable_key = f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{filename}"
-            body = s3.s3_resource.Object(MODEL_BUCKET_NAME, stable_key).get()["Body"].read().decode()
+            key = f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{filename}"
+            body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
             return json.loads(body)
         except Exception:
-            pass  # not there yet (no accepted push for this profile), fall through
+            pass
 
-        # 2. Timestamped artifact runs, newest first
         runs = s3.list_run_prefixes(MODEL_BUCKET_NAME, f"{ARTIFACT_S3_PREFIX}/{profile_name}")
         for run_prefix in reversed(runs):
             try:
@@ -215,25 +189,16 @@ def _load_json_from_s3(profile_name: str, filename: str) -> Optional[dict]:
                 body = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()["Body"].read().decode()
                 return json.loads(body)
             except Exception:
-                continue  # file absent in this run (model not accepted), try older run
-
+                continue
         return None
-    except Exception as exc:
-        logging.warning(f"S3 artifact fetch failed [{profile_name}/{filename}]: {exc}")
+    except Exception as e:
+        logging.warning(f"s3 fetch failed [{profile_name}/{filename}]: {e}")
         return None
 
 
-def _load_model_info(profile_name: str) -> dict:
-    """Compose model registry manifest + baselines for one profile.
-
-    Priority:
-      1. MongoDB   — always current, works locally and in prod
-      2. S3        — production fallback when no local artifact dir exists
-      3. Local fs  — convenience for local dev
-    """
+def _load_model_info(profile_name):
     manifest = baselines = None
 
-    # 1. MongoDB
     try:
         from src.artifact_store import load_baselines, load_model_registry
         manifest = load_model_registry(profile_name=profile_name)
@@ -241,13 +206,11 @@ def _load_model_info(profile_name: str) -> dict:
     except Exception as e:
         logging.warning(f"artifact_store unavailable: {e}")
 
-    # 2. S3 (production path — artifact dir won't exist in a container)
     if manifest is None:
         manifest = _load_json_from_s3(profile_name, "model_registry.json")
     if baselines is None:
         baselines = _load_json_from_s3(profile_name, "baselines.json")
 
-    # 3. Local filesystem (local dev convenience)
     if manifest is None:
         manifest = _read_json(_resolve_profile_artifact(profile_name, "model_registry.json"))
     if baselines is None:
@@ -291,15 +254,12 @@ async def drift_endpoint(window: str = "7d", profile: str = "vehicle_maintenance
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
-    """Translate any unhandled exception into a JSON 500. HTTPException uses its own handler."""
     logging.error(f"{request.method} {request.url.path} failed: {exc}", exc_info=True)
     return JSONResponse({"error": str(exc)}, status_code=500)
 
 
 class _SSEHandler(_py_logging.Handler):
-    """Forward log records into a thread-safe queue for SSE streaming."""
-
-    def __init__(self, q: "queue.Queue[str]"):
+    def __init__(self, q):
         super().__init__(level=_py_logging.INFO)
         self.q = q
         self.setFormatter(_py_logging.Formatter(
@@ -313,8 +273,7 @@ class _SSEHandler(_py_logging.Handler):
             pass
 
 
-def _run_training(q: "queue.Queue[str]") -> None:
-    """Run the training pipeline on a worker thread, piping logs into the queue."""
+def _run_training(q):
     root = _py_logging.getLogger()
     handler = _SSEHandler(q)
     root.addHandler(handler)
@@ -342,7 +301,6 @@ def _run_training(q: "queue.Queue[str]") -> None:
 
 @app.post("/train")
 async def train_endpoint(x_ops_token: Optional[str] = Header(default=None)):
-    """Gate on OPS_TOKEN header; stream training logs via SSE; return metric diff."""
     expected = os.getenv("OPS_TOKEN")
     if expected and x_ops_token != expected:
         raise HTTPException(status_code=401, detail="invalid ops token")
@@ -380,8 +338,6 @@ async def train_endpoint(x_ops_token: Optional[str] = Header(default=None)):
 
 @app.get("/{full_path:path}", include_in_schema=False)
 async def spa_fallback(full_path: str):
-    """SPA catch-all: serve index.html for any unmatched GET so client-side routing works.
-    All API routes are registered above this and will match first."""
     if os.path.exists(SPA_INDEX):
         return FileResponse(SPA_INDEX)
     return JSONResponse(

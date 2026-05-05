@@ -1,63 +1,62 @@
 # Vehicle Maintenance Prediction
 
-MSML 605 final project. FastAPI + React app that trains and serves three
-vehicle-health classifiers.
+MSML 605 final project. FastAPI + React app, three vehicle-health models.
 
-## Run it
+## How to run
 
-Need Python 3.12 and Node 20+. From the repo root:
+You'll need Python 3.12 and Node 20+. Open a terminal, cd into the project
+folder, and run the script for your OS:
 
-```bash
-bash .dev/dev.sh        # mac / linux
-.\.dev\dev.ps1          # windows powershell
+```
+~/Vehicle-Maintenance-Prediction-MLOps $ bash .dev/dev.sh
 ```
 
-Makes a venv, installs deps, trains the three models from the CSVs in
-`data/`, builds the frontend, starts backend on `:8000` and frontend on
-`:3000`. First run is ~5-15 min for training, then it boots in seconds.
+```
+PS C:\Users\you\Vehicle-Maintenance-Prediction-MLOps> .\.dev\dev.ps1
+```
 
-If PowerShell blocks the script:
+That's it. The script makes a venv, installs deps, trains the three models
+from the CSVs in `data/`, builds the frontend, and starts the backend on
+`:8000` and the frontend on `:3000`. First run takes ~5-15 min for training,
+after that it's a few seconds.
 
-```powershell
+If PowerShell blocks the script the first time:
+
+```
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 ## With or without `.env`
 
-You don't need any credentials. Training, predictions, and drift all work
-locally with no setup. `.env` just unlocks the cloud parts:
+You don't need any credentials to run it. Training, predictions, and drift
+all work locally with no setup. `.env` just unlocks the cloud-backed parts:
 
 - `CONNECTION_URL` (Mongo Atlas) - real drift logs, artifact registry
 - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` - S3 model push
 - `CLEARML_API_*` - Optuna trial tracking
 - `OPS_TOKEN` - auth on `/train`
 
-Anything missing just logs a warning and skips. Copy from the template:
+Anything missing just logs a warning and skips. Copy the template if you
+want to fill some in:
 
-```bash
+```
 cp .env.example .env
 ```
 
-## Endpoints
+## URLs once it's up
 
-- `localhost:3000` - predictor UI (3 tabs)
-- `localhost:3000/ops` - ops console
-- `localhost:8000/docs` - swagger
-
-POST `/predict`, `/predict/hyundai`, `/predict/engine`. GET `/model_info`,
-`/drift`. POST `/train` retrains and streams logs over SSE.
+- `localhost:3000` predictor UI (3 tabs)
+- `localhost:3000/ops` ops console (registry, drift, retrain)
+- `localhost:8000/docs` swagger
 
 ## Models
 
-| profile | rows | model |
-|---|---|---|
-| vehicle_maintenance | 50,000 | Random Forest |
-| cars_hyundai | 1,100 | RF or SVM (HPO picks) |
-| engine_data | 19,535 | Random Forest |
+vehicle_maintenance (50k rows, Random Forest), cars_hyundai (1.1k rows,
+RF or SVM picked by HPO), engine_data (19.5k rows, Random Forest). All
+three share the same pipeline: ingest -> validate -> transform -> HPO
+train -> evaluate -> push.
 
-Pipeline: ingest -> validate -> transform -> HPO -> evaluate -> push.
-
-To train one profile:
+To retrain a single profile manually:
 
 ```python
 from src.pipeline.training_pipeline import TrainPipeline
