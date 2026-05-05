@@ -38,5 +38,3 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 
-# local config
-.dev/

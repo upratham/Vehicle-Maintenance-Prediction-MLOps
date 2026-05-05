@@ -4,7 +4,6 @@ import pickle
 import numpy as np
 from pandas import DataFrame
 
-from src.cloud_storage.aws_storage import SimpleStorageService
 from src.constants import (
     MODEL_BUCKET_NAME,
     MODEL_FILE_NAME,
@@ -12,90 +11,83 @@ from src.constants import (
     PREPROCESSOR_OBJ_DIR,
     PREPROCSSING_OBJECT_FILE_NAME,
 )
-from src.entity.s3_estimator import Proj1Estimator
 from src.logger import logging
 from src.utils.main_utils import load_object
 
 
-def _s3_preprocessor_key(profile_name: str) -> str:
-    return f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{PREPROCSSING_OBJECT_FILE_NAME}".replace("\\", "/")
-
-
-def _local_preprocessor_path(profile_name: str) -> str:
-    return os.path.join(PREPROCESSOR_OBJ_DIR, profile_name, PREPROCSSING_OBJECT_FILE_NAME)
-
-
-def _load_preprocessor(profile_name: str):
-    """Prefer the S3 preprocessor that was paired with the live model; fall back to the
-    image-bundled one. Without this, a model retrained with a different feature set is
-    silently mismatched against the stale preprocessor baked into the deployed image."""
-    try:
-        s3 = SimpleStorageService()
-        obj = s3.s3_resource.Object(MODEL_BUCKET_NAME, _s3_preprocessor_key(profile_name)).get()
-        return pickle.loads(obj["Body"].read())
-    except Exception as exc:
-        logging.warning(f"S3 preprocessor unavailable for '{profile_name}' ({exc}); using local file.")
-        path = _local_preprocessor_path(profile_name)
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"No preprocessor for profile '{profile_name}' in S3 or at {path}."
-            )
-        return load_object(path)
-
-
-def _s3_model_key(profile_name: str) -> str:
-    return f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{MODEL_FILE_NAME}".replace("\\", "/")
-
-
-PROFILE_LABELS: dict[str, tuple[str, str]] = {
-    # profile_name : (label_when_1, label_when_0)
+PROFILE_LABELS = {
     "vehicle_maintenance": ("Maintenance Required", "No Maintenance Needed"),
-    "cars_hyundai":        ("Anomaly Detected",     "Normal"),
-    "engine_data":         ("Engine Issue Detected", "Engine Healthy"),
+    "cars_hyundai": ("Anomaly Detected", "Normal"),
+    "engine_data": ("Engine Issue Detected", "Engine Healthy"),
 }
 
 
-class ProfileClassifier:
-    """Config-driven classifier: loads the profile's preprocessor + S3 model and predicts."""
+def load_preprocessor(profile_name):
+    path = os.path.join(PREPROCESSOR_OBJ_DIR, profile_name, PREPROCSSING_OBJECT_FILE_NAME)
+    if os.path.exists(path):
+        return load_object(path)
+    raise FileNotFoundError(
+        f"no preprocessor for {profile_name}. run `python demo.py` to train models first."
+    )
 
-    def __init__(self, profile_name: str):
+
+def load_model(profile_name):
+    base = os.path.join("artifact", profile_name)
+    if os.path.isdir(base):
+        runs = sorted(
+            (d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))),
+            reverse=True,
+        )
+        for run in runs:
+            p = os.path.join(base, run, "model_trainer", "trained_model", MODEL_FILE_NAME)
+            if os.path.exists(p):
+                return load_object(p)
+
+    try:
+        from src.cloud_storage.aws_storage import SimpleStorageService
+        s3 = SimpleStorageService()
+        key = f"{MODEL_PUSHER_S3_KEY}/{profile_name}/{MODEL_FILE_NAME}"
+        obj = s3.s3_resource.Object(MODEL_BUCKET_NAME, key).get()
+        return pickle.loads(obj["Body"].read())
+    except Exception as e:
+        logging.warning(f"model not found in s3 either: {e}")
+        raise FileNotFoundError(
+            f"no model for {profile_name}. run `python demo.py` to train models first."
+        )
+
+
+class ProfileClassifier:
+    def __init__(self, profile_name):
         if profile_name not in PROFILE_LABELS:
-            raise ValueError(
-                f"Unknown profile '{profile_name}'. Valid: {list(PROFILE_LABELS)}"
-            )
+            raise ValueError(f"unknown profile {profile_name}")
         self.profile_name = profile_name
 
-    def predict(self, dataframe: DataFrame) -> np.ndarray:
-        preprocessor = _load_preprocessor(self.profile_name)
+    def predict(self, dataframe):
+        preprocessor = load_preprocessor(self.profile_name)
         X = preprocessor.transform(dataframe)
-        estimator = Proj1Estimator(
-            bucket_name=MODEL_BUCKET_NAME,
-            model_path=_s3_model_key(self.profile_name),
-        )
-        return estimator.predict(X)
+        model = load_model(self.profile_name)
+        return model.predict(X)
 
-    def label(self, value: int) -> str:
+    def label(self, value):
         on, off = PROFILE_LABELS[self.profile_name]
         return on if value == 1 else off
 
 
 class VehicleMaintenanceData:
-    """Input features for the vehicle_maintenance model (raw, pre-preprocessor)."""
-
     def __init__(
         self,
-        Reported_Issues: int,
-        Vehicle_Age: int,
-        Engine_Size: float,
-        Odometer_Reading: float,
-        Accident_History: int,
-        Fuel_Efficiency: float,
-        Tire_Condition: str,
-        Brake_Condition: str,
-        Battery_Status: str,
-        Vehicle_Model: str,
-        Fuel_Type: str,
-        Transmission_Type: str,
+        Reported_Issues,
+        Vehicle_Age,
+        Engine_Size,
+        Odometer_Reading,
+        Accident_History,
+        Fuel_Efficiency,
+        Tire_Condition,
+        Brake_Condition,
+        Battery_Status,
+        Vehicle_Model,
+        Fuel_Type,
+        Transmission_Type,
     ):
         self.Reported_Issues = int(Reported_Issues)
         self.Vehicle_Age = int(Vehicle_Age)
@@ -110,63 +102,41 @@ class VehicleMaintenanceData:
         self.Fuel_Type = Fuel_Type
         self.Transmission_Type = Transmission_Type
 
-    def get_dataframe(self) -> DataFrame:
+    def get_dataframe(self):
         return DataFrame({
-            "Reported_Issues":   [self.Reported_Issues],
-            "Vehicle_Age":       [self.Vehicle_Age],
-            "Engine_Size":       [self.Engine_Size],
-            "Odometer_Reading":  [self.Odometer_Reading],
-            "Accident_History":  [self.Accident_History],
-            "Fuel_Efficiency":   [self.Fuel_Efficiency],
-            "Tire_Condition":    [self.Tire_Condition],
-            "Brake_Condition":   [self.Brake_Condition],
-            "Battery_Status":    [self.Battery_Status],
-            "Vehicle_Model":     [self.Vehicle_Model],
-            "Fuel_Type":         [self.Fuel_Type],
+            "Reported_Issues": [self.Reported_Issues],
+            "Vehicle_Age": [self.Vehicle_Age],
+            "Engine_Size": [self.Engine_Size],
+            "Odometer_Reading": [self.Odometer_Reading],
+            "Accident_History": [self.Accident_History],
+            "Fuel_Efficiency": [self.Fuel_Efficiency],
+            "Tire_Condition": [self.Tire_Condition],
+            "Brake_Condition": [self.Brake_Condition],
+            "Battery_Status": [self.Battery_Status],
+            "Vehicle_Model": [self.Vehicle_Model],
+            "Fuel_Type": [self.Fuel_Type],
             "Transmission_Type": [self.Transmission_Type],
         })
 
-    def get_vehicle_input_data_frame(self) -> DataFrame:
-        """Backward-compat alias used by the legacy form route."""
-        return self.get_dataframe()
-
 
 class HyundaiCarsData:
-    """Input features for the cars_hyundai anomaly-detection model."""
-
-    def __init__(
-        self,
-        engine_temperature: float,
-        brake_pad_thickness: float,
-        tire_pressure: float,
-        maintenance_type: str,
-    ):
+    def __init__(self, engine_temperature, brake_pad_thickness, tire_pressure, maintenance_type):
         self.engine_temperature = float(engine_temperature)
         self.brake_pad_thickness = float(brake_pad_thickness)
         self.tire_pressure = float(tire_pressure)
         self.maintenance_type = str(maintenance_type)
 
-    def get_dataframe(self) -> DataFrame:
+    def get_dataframe(self):
         return DataFrame({
-            "Engine Temperature (°C)":   [self.engine_temperature],
-            "Brake Pad Thickness (mm)":  [self.brake_pad_thickness],
-            "Tire Pressure (PSI)":       [self.tire_pressure],
-            "Maintenance Type":          [self.maintenance_type],
+            "Engine Temperature (°C)": [self.engine_temperature],
+            "Brake Pad Thickness (mm)": [self.brake_pad_thickness],
+            "Tire Pressure (PSI)": [self.tire_pressure],
+            "Maintenance Type": [self.maintenance_type],
         })
 
 
 class EngineData:
-    """Input features for the engine_data condition model (all numeric)."""
-
-    def __init__(
-        self,
-        engine_rpm: float,
-        lub_oil_pressure: float,
-        fuel_pressure: float,
-        coolant_pressure: float,
-        lub_oil_temp: float,
-        coolant_temp: float,
-    ):
+    def __init__(self, engine_rpm, lub_oil_pressure, fuel_pressure, coolant_pressure, lub_oil_temp, coolant_temp):
         self.engine_rpm = float(engine_rpm)
         self.lub_oil_pressure = float(lub_oil_pressure)
         self.fuel_pressure = float(fuel_pressure)
@@ -174,42 +144,25 @@ class EngineData:
         self.lub_oil_temp = float(lub_oil_temp)
         self.coolant_temp = float(coolant_temp)
 
-    def get_dataframe(self) -> DataFrame:
+    def get_dataframe(self):
         return DataFrame({
-            "Engine rpm":       [self.engine_rpm],
+            "Engine rpm": [self.engine_rpm],
             "Lub oil pressure": [self.lub_oil_pressure],
-            "Fuel pressure":    [self.fuel_pressure],
+            "Fuel pressure": [self.fuel_pressure],
             "Coolant pressure": [self.coolant_pressure],
-            "lub oil temp":     [self.lub_oil_temp],
-            "Coolant temp":     [self.coolant_temp],
+            "lub oil temp": [self.lub_oil_temp],
+            "Coolant temp": [self.coolant_temp],
         })
 
 
-class MultiModelOrchestrator:
-    """Route a prediction request to the correct profile-specific classifier."""
-
-    def predict(self, profile_name: str, dataframe: DataFrame) -> dict:
-        classifier = ProfileClassifier(profile_name)
-        raw = classifier.predict(dataframe)[0]
-        score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
-        label = 1 if score >= 0.5 else 0
-        return {
-            "profile": profile_name,
-            "label":   label,
-            "score":   round(score, 4),
-            "status":  classifier.label(label),
-        }
-
-
-# Backward-compat aliases used by the legacy app.py form route.
-VehicleData = VehicleMaintenanceData
-
-
-class VehicleDataClassifier:
-    """Thin wrapper kept for backward compatibility with the legacy HTML form route."""
-
-    def __init__(self, prediction_pipeline_config=None):
-        self._classifier = ProfileClassifier("vehicle_maintenance")
-
-    def predict(self, dataframe: DataFrame) -> np.ndarray:
-        return self._classifier.predict(dataframe)
+def predict_profile(profile_name, dataframe):
+    classifier = ProfileClassifier(profile_name)
+    raw = classifier.predict(dataframe)[0]
+    score = float(raw[0]) if hasattr(raw, "__len__") else float(raw)
+    label = 1 if score >= 0.5 else 0
+    return {
+        "profile": profile_name,
+        "label": label,
+        "score": round(score, 4),
+        "status": classifier.label(label),
+    }
